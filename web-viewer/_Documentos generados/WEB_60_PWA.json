@@ -1,8 +1,0 @@
-{
-  "sw": {},
-  "config": {},
-  "manifest": ".cache/concepts/manifest.json",
-  "precache": {},
-  "lazy": {},
-  "warnings": ["el manifest no declara `icons`: la PWA no es instalable"]
-}

@@ -1,2 +1,0 @@
-{"_":"meta","n":1,"how":"cadenas precomputadas; en web sin bundler el ORDEN de <script> es la arquitectura"}
-{"id":"arranque:index","k":"boot","hops":["(inline #1)","/src/main.tsx"],"nota":"orden REAL de carga: un módulo no puede usar lo que se carga después"}

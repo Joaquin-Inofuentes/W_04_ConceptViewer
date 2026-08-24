@@ -15,3 +15,7 @@ APK/decompiled/
 APK/raw_unzip/
 APK/_tools/
 APK/jadx_log.txt
+
+# Android SDK portable (herramientas de build, ~50MB+ de jars binarios).
+# Se regenera con sdkmanager y no tiene por que vivir en el repo.
+AndroidSimulator/

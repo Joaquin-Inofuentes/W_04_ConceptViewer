@@ -1,1 +1,0 @@
-{"_":"meta","model":"web-generic","nota":"N+1 = await dentro de for/while/map(async). En Cloudflare free cada uno consume subrequests del tope de 50."}

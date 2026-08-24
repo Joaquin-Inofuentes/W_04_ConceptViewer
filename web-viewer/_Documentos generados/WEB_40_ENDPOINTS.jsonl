@@ -1,5 +1,0 @@
-{"_":"meta","called":4}
-{"c":"`/concepts-drive?action=download&fileId=…`","m":"fetch","from":"scripts/crawl-drive.mjs:60","role":"script"}
-{"c":"`/concepts-drive?action=list&folderId=…`","m":"fetch","from":"scripts/crawl-drive.mjs:47","role":"script"}
-{"c":"`/rest/v1/concept_thumbnails…`","m":"fetch","from":"scripts/gen-thumbnails.mjs:148","role":"script"}
-{"c":"`http://localhost:/…`","m":"fetch","from":"scripts/gen-thumbnails.mjs:92","role":"script"}

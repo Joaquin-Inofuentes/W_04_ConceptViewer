@@ -1,7 +1,0 @@
-{"_":"meta","n":6,"runners":["node:6"],"how":"grep 'nombre de módulo' IA_75_TESTS.jsonl → qué test lo cubre"}
-{"t":"scratch/test_export.cjs","runner":"node"}
-{"t":"scratch/test_local.cjs","runner":"node"}
-{"t":"scratch/test_ui.cjs","runner":"node"}
-{"t":"scripts/browser/test-matrices-payload.ts","runner":"node","valida":"Prueba, para cada imagen colocada, tres candidatas de matriz de posicion","cubre":["../../src/VisorConcept/zip"]}
-{"t":"scripts/test-matrices-local.mjs","runner":"node","valida":"Corre la logica de overlap de test-matrices-payload.ts contra archivos","cubre":["../src/VisorConcept/zip.ts"],"fn":3}
-{"t":"scripts/test-matrices.mjs","runner":"node"}
