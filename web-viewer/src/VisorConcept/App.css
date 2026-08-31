@@ -38,6 +38,17 @@ body {
   background-color: var(--bg-canvas);
   user-select: none;
   position: relative;
+  /* Sin esto, un paneo que llega al borde del lienzo se lo pasa al scroll de
+     la PAGINA por debajo (el "pull to refresh"/rebote de Chrome y Safari
+     moviles): un arrastre rapido hacia arriba en el borde superior del
+     dibujo se sentia como que el visor entero se resbalaba. `touchAction:
+     "none"` (ya puesto en el canvas, ver Viewer.tsx) evita el scroll nativo
+     PROPIO del elemento; esto evita que el gesto se "derrame" al padre. */
+  overscroll-behavior: none;
+  /* Menu contextual nativo (copiar imagen, etc.) al mantener apretado sobre
+     el canvas: en un visor pensado para pan/zoom con el dedo, ese menu es
+     pura friccion, no una funcion que alguien use aca. */
+  -webkit-touch-callout: none;
 }
 
 /* UI Elements */
@@ -145,6 +156,46 @@ body {
   margin-bottom: 0.5rem;
 }
 
+.plano-indicador {
+  font-size: 0.7rem;
+  color: var(--text-main);
+  opacity: 0.75;
+  text-align: center;
+  padding: 2px 0;
+  user-select: none;
+}
+
+.atajos-lista {
+  list-style: none;
+  margin: 0;
+  padding: 0.25rem 1rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.atajos-lista li {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.85rem;
+  color: var(--text-main);
+}
+.atajos-lista kbd {
+  font-family: inherit;
+  font-size: 0.75rem;
+  background: var(--bg-color);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 0.1rem 0.4rem;
+  min-width: 1.4em;
+  text-align: center;
+  flex-shrink: 0;
+}
+.atajos-lista span {
+  color: var(--text-secundario, var(--text-main));
+  opacity: 0.85;
+}
+
 .btn-tiny {
   font-size: 0.7rem;
   padding: 0.2rem 0.4rem;
@@ -154,6 +205,10 @@ body {
   cursor: pointer;
   color: var(--text-main);
   white-space: nowrap;
+}
+.btn-tiny:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 .btn-tiny:hover {
   background: var(--bg-color);
@@ -559,6 +614,29 @@ body {
   white-space: nowrap;
 }
 
+/* Aviso puntual del export ("lienzo vacio", "se recorto la resolucion").
+   Mismo estilo que `.viewer-fallidos` pero CLICKEABLE (se puede cerrar antes
+   de que se auto-oculte) y sin el borde rojo: no siempre es un error, a
+   veces es solo informativo (recorte de resolucion por RAM). */
+.viewer-export-aviso {
+  position: absolute;
+  top: 44px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 55;
+  padding: 0.35rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  background: var(--carga-fondo);
+  color: var(--carga-texto);
+  border: 1px solid var(--border-color);
+  box-shadow: var(--sombra);
+  cursor: pointer;
+  max-width: min(90vw, 420px);
+  text-align: center;
+}
+
 /* Celda de una foto que todavia no se trajo. No es un error: a este zoom mide
    pocos pixeles y por eso no se baja. Se dice explicitamente, que ademas es la
    unica parte de la app donde se ensena el modelo mental del umbral. */
@@ -591,5 +669,12 @@ body {
   }
   .dropdown-menu {
     animation: fadeIn 0.1s ease-out forwards;
+  }
+  /* `popIn` escala de 0.95 a 1 al abrir una foto a pantalla completa: el
+     unico uso de `transform` en una animacion de aparicion de este archivo
+     que quedaba sin cubrir. Aparece directo, sin el achique inicial. */
+  .fullscreen-preview img {
+    animation: none;
+    opacity: 1;
   }
 }

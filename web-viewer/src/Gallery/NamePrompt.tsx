@@ -32,11 +32,14 @@ export function NamePrompt({ onSubmit }: NamePromptProps) {
     >
       <m.div
         className="gallery-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="titulo-modal-nombre"
         initial={{ opacity: 0, scale: 0.92, y: 16 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         transition={{ type: "spring", stiffness: 300, damping: 26 }}
       >
-        <h3>Como te llamas?</h3>
+        <h3 id="titulo-modal-nombre">Como te llamas?</h3>
         <p>Se usa para identificar tus dibujos y tus descargas.</p>
         <input
           type="text"

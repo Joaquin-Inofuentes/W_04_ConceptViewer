@@ -477,9 +477,34 @@ function leerMtimesConocidos(): Record<string, string> {
   }
 }
 
+/** Techo de entradas antes de podar las mas viejas. Una entrada pesa ~60
+ * bytes (un fileId de Drive + un timestamp ISO); 2000 son ~120 KB, lejos de
+ * cualquier cuota real de localStorage (5-10 MB tipico). */
+const MAX_MTIMES = 2000;
+
 function guardarMtimesConocidos(m: Record<string, string>) {
   try {
-    localStorage.setItem(MTIMES_KEY, JSON.stringify(m));
+    let aGuardar = m;
+    // Sin esto el objeto crece para siempre: se agrega una entrada por
+    // dibujo abierto y nunca se borra ninguna. Para un uso real (una
+    // inmobiliaria con miles de planos a lo largo de meses) eso es un
+    // Record cada vez mas pesado de parsear/serializar en CADA apertura, sin
+    // ningun beneficio -- lo unico que importa es el modifiedAt RECIENTE de
+    // cada archivo. Las claves de un objeto JS con ids de Drive (alfanumericos
+    // con guiones, no numericos) preservan el orden de insercion, asi que
+    // Object.keys(m) ya trae "mas viejo primero" sin ordenar nada.
+    const claves = Object.keys(m);
+    if (claves.length > MAX_MTIMES) {
+      aGuardar = {};
+      // Se descarta la mitad de entradas vistas hace MAS tiempo (no la mitad
+      // "menos usada": reasignar una clave existente no la mueve de lugar, asi
+      // que esto es FIFO por primera vez vista, no LRU). Podar de a una por
+      // vez en cada llamada volveria a disparar el corte en la apertura
+      // siguiente; podar a la mitad da margen para varios miles de aperturas
+      // antes de que haga falta podar de nuevo.
+      for (const k of claves.slice(-Math.floor(MAX_MTIMES / 2))) aGuardar[k] = m[k];
+    }
+    localStorage.setItem(MTIMES_KEY, JSON.stringify(aGuardar));
   } catch {
     /* localStorage lleno o bloqueado: no es fatal, solo se pierde la deteccion */
   }

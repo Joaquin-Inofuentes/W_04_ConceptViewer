@@ -435,8 +435,15 @@ export const InteractivePreview: React.FC<InteractivePreviewProps> = ({ src, pho
     setTouchDistStart(null);
   };
 
+  // Un solo layout sincronico por render (no dos): antes el indicador de
+  // zoom de mas abajo llamaba a `getBoundingClientRect()` una vez para
+  // `left` y otra para `top`, en cada frame que dura el pinch/arrastre con
+  // boton derecho. Solo hace falta calcularlo cuando el indicador va a
+  // mostrarse.
+  const rectIndicadorZoom = isRightDragging ? containerRef.current?.getBoundingClientRect() : null;
+
   return (
-    <div 
+    <div
       ref={containerRef}
       className="fullscreen-preview"
       onMouseDown={handleMouseDown}
@@ -497,8 +504,8 @@ export const InteractivePreview: React.FC<InteractivePreviewProps> = ({ src, pho
       {isRightDragging && (
         <div style={{
           position: 'absolute',
-          left: rightDragStartPos.x - (containerRef.current?.getBoundingClientRect().left || 0),
-          top: rightDragStartPos.y - (containerRef.current?.getBoundingClientRect().top || 0),
+          left: rightDragStartPos.x - (rectIndicadorZoom?.left ?? 0),
+          top: rightDragStartPos.y - (rectIndicadorZoom?.top ?? 0),
           width: '16px',
           height: '16px',
           marginLeft: '-8px',

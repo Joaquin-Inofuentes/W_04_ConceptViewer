@@ -5,6 +5,7 @@
 //   node scripts/e2e-galeria.mjs ["Nombre/De/La/Carpeta"]
 
 import path from "node:path";
+import { mkdir } from "node:fs/promises";
 import puppeteer from "puppeteer";
 
 // Apunta a produccion con BASE_URL=https://... ; por defecto, el dev server.
@@ -89,6 +90,11 @@ const info = await page.evaluate(() => {
 console.log(`\n${JSON.stringify(info, null, 2)}`);
 
 const shot = path.join(CACHE_DIR, "e2e-galeria.png");
+// `CACHE_DIR` puede no existir todavia (los otros scripts de la suite lo
+// crean via crawl-drive.mjs, que este test no necesita para lo que prueba):
+// sin esto, un ambiente limpio hacia fallar el screenshot con ENOENT
+// DESPUES de que la navegacion y las miniaturas ya habian pasado.
+await mkdir(CACHE_DIR, { recursive: true });
 await page.screenshot({ path: shot });
 console.log(`\ncaptura: ${shot}`);
 console.log(errores.length ? `errores: ${[...new Set(errores)].slice(0, 5).join(" | ")}` : "sin errores en consola");

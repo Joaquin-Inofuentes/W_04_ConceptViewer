@@ -96,6 +96,10 @@ body {
   place-items: center;
   min-width: 320px;
   min-height: 100vh;
+  /* Companero de `100dvh` (ver `.app-container` mas abajo): en Chrome/Safari
+     moviles `100vh` cuenta la barra de direcciones aunque este oculta, asi
+     que el body queda mas alto que el viewport visible real. */
+  min-height: 100dvh;
   background-color: var(--bg-color);
   color: var(--text-main);
 }

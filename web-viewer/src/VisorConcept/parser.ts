@@ -334,13 +334,32 @@ function rgbaToHex(r: number, g: number, b: number, a: number) {
 export async function readEmbeddedThumbnail(
   fuente: ArrayBuffer | ZipSource
 ): Promise<Blob | null> {
-  try {
+  const intentar = async (): Promise<Blob | null> => {
     const zip = await ZipArchive.open(fuente as ZipSource);
     const nombre = zip.names().find((n) => /(^|\/)thumb\.jpe?g$/i.test(n));
+    // Esto SI es "no hay vista previa": no hay entrada `thumb.jpg` en el
+    // zip, nada que reintentar. Ver el mismo criterio en `ConceptsFile.
+    // thumbnail()` de `openConceptsSource`, mas abajo.
     if (!nombre) return null;
     return await zip.readBlob(nombre, "image/jpeg");
+  };
+  try {
+    return await intentar();
   } catch {
-    return null;
+    // Pero un fallo de LECTURA (502 esporadico del proxy, indice corrupto de
+    // un rango cortado a mitad de camino) es otra cosa: antes se trataba
+    // igual que "no trae vista previa" y esta funcion la usa el crawler de
+    // reindexado masivo (`driveCrawler.ts`), que interpreta null como
+    // "sin miniatura para este archivo" y sigue de largo -- un 502
+    // transitorio dejaba un archivo marcado como sin vista previa PARA
+    // SIEMPRE en el cache de Supabase, con reintentar como unico arreglo
+    // manual. Un solo reintento corto cubre el caso comun.
+    await new Promise((r) => setTimeout(r, 400));
+    try {
+      return await intentar();
+    } catch {
+      return null;
+    }
   }
 }
 

@@ -66,6 +66,15 @@ interface ViewerProps {
    * app puede decirlo en vez de afirmar que termino de cargar. */
   onFallidos?: (cuantos: number) => void;
   /**
+   * Avisos NO bloqueantes del export ("el lienzo esta vacio", "se exporto a
+   * menor resolucion por el limite de RAM del dispositivo"). Antes el primero
+   * era un `alert()` -- congela la pestaña entera, incluido el render loop, y
+   * en movil tapa toda la pantalla con el chrome nativo del navegador -- y el
+   * segundo solo iba a la consola, invisible para cualquiera que no tenga las
+   * devtools abiertas.
+   */
+  onExportNotice?: (mensaje: string) => void;
+  /**
    * Se dispara UNA sola vez, la primera vez que todo lo que cae dentro del
    * viewport actual ya tiene bitmap dibujable (o el documento no tiene
    * imagenes). Es la condicion de "no hay nada a medio cargar visible":
@@ -82,6 +91,21 @@ export interface ViewerHandle {
   exportDrawing: (format: 'png' | 'jpg' | 'pdf', zoomAll?: boolean) => Promise<void>;
   /** Encuadra todo el dibujo en pantalla (el "zoom all" del boton). */
   zoomAll: () => void;
+  /** Acerca/aleja un escalon fijo, centrado en el medio de la pantalla (los
+   * botones +/- de la barra de herramientas). */
+  zoomIn: () => void;
+  zoomOut: () => void;
+  /**
+   * Encuadra el N-esimo plano colocado (orden de aparicion en el documento,
+   * el mismo que usa la galeria de imagenes). Sirve para los botones
+   * "plano siguiente/anterior": en un dibujo con varias laminas (como los
+   * PDF de electricidad con una hoja por piso) no hay que ir a pulso a
+   * buscar cada una a mano.
+   */
+  irAPlano: (indice: number) => void;
+  /** Cuantos planos (imagenes colocadas, no recursos unicos) hay para
+   * navegar con `irAPlano`. */
+  cantidadPlanos: () => number;
   /** Metricas en vivo, para benchmarks y diagnostico. */
   getStats: () => ViewerStats;
   /**
@@ -318,7 +342,7 @@ function buildPath(points: Stroke["points"], tolerancia: number): Path2D {
   return path;
 }
 
-const ViewerBase = forwardRef<ViewerHandle, ViewerProps>(({ doc, fileId, layerConfigs, isolatedLayer, imageOpacity, onImagesLoaded, onResourcesReady, onResourceProgress, onRefinando, onBytesPrevistos, onPrimerGesto, onFallidos, onCoberturaLista }, ref) => {
+const ViewerBase = forwardRef<ViewerHandle, ViewerProps>(({ doc, fileId, layerConfigs, isolatedLayer, imageOpacity, onImagesLoaded, onResourcesReady, onResourceProgress, onRefinando, onBytesPrevistos, onPrimerGesto, onFallidos, onCoberturaLista, onExportNotice }, ref) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -496,6 +520,7 @@ const ViewerBase = forwardRef<ViewerHandle, ViewerProps>(({ doc, fileId, layerCo
   const onPrimerGestoRef = useRef(onPrimerGesto);
   const onFallidosRef = useRef(onFallidos);
   const onCoberturaListaRef = useRef(onCoberturaLista);
+  const onExportNoticeRef = useRef(onExportNotice);
   useEffect(() => {
     onImagesLoadedRef.current = onImagesLoaded;
     onResourcesReadyRef.current = onResourcesReady;
@@ -505,6 +530,7 @@ const ViewerBase = forwardRef<ViewerHandle, ViewerProps>(({ doc, fileId, layerCo
     onPrimerGestoRef.current = onPrimerGesto;
     onFallidosRef.current = onFallidos;
     onCoberturaListaRef.current = onCoberturaLista;
+    onExportNoticeRef.current = onExportNotice;
   });
 
   /** Se avisa una sola vez por documento (ver `onCoberturaLista`). */
@@ -768,6 +794,33 @@ const ViewerBase = forwardRef<ViewerHandle, ViewerProps>(({ doc, fileId, layerCo
   useImperativeHandle(ref, () => ({
     getStats: () => ({ ...statsRef.current }),
     zoomAll: () => fitToBoundsRef.current(),
+    zoomIn: () => zoomStepRef.current(1),
+    zoomOut: () => zoomStepRef.current(-1),
+    cantidadPlanos: () => (docCacheRef.current?.items.filter((i) => i.kind === "image").length ?? 0),
+    irAPlano: (indice: number) => {
+      const dc = docCacheRef.current;
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!dc || !rect || rect.width === 0 || rect.height === 0) return;
+      const imagenes = dc.items.filter((i) => i.kind === "image");
+      const item = imagenes[indice];
+      if (!item) return;
+      const w = item.maxX - item.minX;
+      const h = item.maxY - item.minY;
+      if (w <= 0 || h <= 0) return;
+      // Mismo margen que `computeFit` (10%), asi el plano no queda pegado al
+      // borde de la pantalla.
+      const padding = Math.max(w, h) * 0.1;
+      let zoom = Math.min(rect.width / (w + padding * 2), rect.height / (h + padding * 2));
+      zoom = Math.max(0.001, Math.min(zoom, 20));
+      const cx = (item.minX + item.maxX) / 2;
+      const cy = (item.minY + item.maxY) / 2;
+      zoomRef.current = zoom;
+      panRef.current = { x: rect.width / 2 - cx * zoom, y: rect.height / 2 - cy * zoom };
+      gestoRef.current = false;
+      limpiarTransformGestoRef.current();
+      requestRedraw();
+      pedirRefinadoRef.current();
+    },
     exportDrawing: async (format: 'png' | 'jpg' | 'pdf', zoomAll: boolean = true) => {
       const doc = docRef.current;
       const docCache = docCacheRef.current;
@@ -788,7 +841,7 @@ const ViewerBase = forwardRef<ViewerHandle, ViewerProps>(({ doc, fileId, layerCo
       }
 
       if (zoomAll && minX === Infinity) {
-        alert("El lienzo está vacío u oculto.");
+        onExportNoticeRef.current?.("El lienzo está vacío u oculto.");
         return;
       }
 
@@ -822,6 +875,9 @@ const ViewerBase = forwardRef<ViewerHandle, ViewerProps>(({ doc, fileId, layerCo
       const exportScale = safeExportScale(exportWidth, exportHeight);
       if (exportFueRecortado(exportWidth, exportHeight)) {
         console.warn("Export a menor resolucion por el limite de memoria del dispositivo");
+        onExportNoticeRef.current?.(
+          "Se exportó a menor resolución por la memoria disponible en este dispositivo."
+        );
       }
       const escalaRecursos = exportScale * exportZoom;
       const dibujado = drawnSizes(doc);
@@ -903,16 +959,14 @@ const ViewerBase = forwardRef<ViewerHandle, ViewerProps>(({ doc, fileId, layerCo
         }
         ctx.restore();
 
-        // PNG solo para el export PNG. El PDF tambien iba en PNG (sin perdida)
-        // y despues se le pasaba a jsPDF declarado como 'JPEG': el resultado
-        // era un PDF de una sola pagina de 170 MB. Con JPEG de calidad alta
-        // pesa dos ordenes de magnitud menos y se ve igual.
-        const dataUrl =
-          format === 'png'
-            ? exportCanvas.toDataURL('image/png')
-            : exportCanvas.toDataURL('image/jpeg', 0.95);
-
         if (format === 'pdf') {
+          // El PDF necesita el JPEG como base64 (jsPDF.addImage lo pide asi
+          // para 'JPEG'): se mantiene toDataURL solo aca, sin tocar la
+          // calidad/formato ya afinados (ver comentario original: el PDF
+          // tambien iba en PNG sin perdida y pesaba 170 MB de una pagina;
+          // JPEG a calidad alta pesa dos ordenes de magnitud menos y se ve
+          // igual).
+          const dataUrl = exportCanvas.toDataURL('image/jpeg', 0.95);
           const jsPDF = (await import('jspdf')).default;
           const pdf = new jsPDF({
             orientation: exportWidth > exportHeight ? 'landscape' : 'portrait',
@@ -922,10 +976,31 @@ const ViewerBase = forwardRef<ViewerHandle, ViewerProps>(({ doc, fileId, layerCo
           pdf.addImage(dataUrl, 'JPEG', 0, 0, exportWidth, exportHeight);
           pdf.save('export.pdf');
         } else {
-          const link = document.createElement('a');
-          link.download = `export.${format}`;
-          link.href = dataUrl;
-          link.click();
+          // `toBlob` en vez de `toDataURL`: para PNG/JPG (sin pasar por
+          // jsPDF) no hace falta base64 en ningun lado. `toDataURL` es un
+          // encode SINCRONICO que bloquea el hilo principal -- en un export
+          // "Completo" de un dibujo grande el canvas puede ser de varios
+          // Mpx -- y produce una string ~33% mas pesada que el binario. El
+          // mismo patron que ya usan `InteractivePreview.tsx` y
+          // `exportRender.ts` para esto mismo.
+          const mime = format === 'png' ? 'image/png' : 'image/jpeg';
+          const blob = await new Promise<Blob | null>((resolve) =>
+            exportCanvas.toBlob(resolve, mime, format === 'jpg' ? 0.95 : undefined)
+          );
+          if (blob) {
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.download = `export.${format}`;
+            link.href = url;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            // Diferido, no inmediato: revocar el ObjectURL apenas despues de
+            // click() es una carrera conocida en Safari/Firefox movil (la
+            // descarga puede fallar o bajar truncada sin ningun error). Mismo
+            // plazo que ya usa `exportRender.ts` para el mismo problema.
+            setTimeout(() => URL.revokeObjectURL(url), 60_000);
+          }
         }
         // El canvas de export puede pesar decenas de MB; en gama baja hay que
         // soltarlo ya y no esperar al GC.
@@ -1079,9 +1154,11 @@ const ViewerBase = forwardRef<ViewerHandle, ViewerProps>(({ doc, fileId, layerCo
         liberarImagen(recurso.img);
       }
     },
-    // `budgets` sale de un useMemo con dependencias vacias, asi que es estable
-    // toda la vida del componente: el handle se sigue creando una sola vez.
-  }), [budgets]);
+    // `budgets` sale de un useMemo con dependencias vacias y `requestRedraw`
+    // de un useCallback tambien con deps vacias (ver mas arriba): las dos son
+    // estables toda la vida del componente, asi que el handle se sigue
+    // creando una sola vez.
+  }), [budgets, requestRedraw]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -2072,6 +2149,37 @@ const ViewerBase = forwardRef<ViewerHandle, ViewerProps>(({ doc, fileId, layerCo
     finGestoTimerRef.current = window.setTimeout(() => terminarGesto(), 250);
   }, [iniciarGesto, aplicarTransformGesto, terminarGesto, requestRedraw]);
 
+  /** Un escalon de zoom entrada/salida, centrado en el medio de la pantalla
+   * (no hay posicion de mouse de la que partir, a diferencia de la rueda).
+   * Reusa `marcarGesto`: es exactamente el mismo camino que un tick de rueda
+   * -- el refinado de recursos llega solo, 250 ms despues, por el mismo
+   * debounce de `terminarGesto`. */
+  const ZOOM_STEP_BOTON = 1.4;
+  const zoomStep = useCallback((direccion: 1 | -1) => {
+    const size = sizeRef.current;
+    if (size.width === 0 || size.height === 0) return;
+    const factor = Math.pow(ZOOM_STEP_BOTON, direccion);
+    const centerX = size.width / 2;
+    const centerY = size.height / 2;
+    let newZoom = zoomRef.current * factor;
+    newZoom = Math.max(0.01, Math.min(newZoom, 100));
+    const k = newZoom / zoomRef.current;
+    panRef.current = {
+      x: centerX - (centerX - panRef.current.x) * k,
+      y: centerY - (centerY - panRef.current.y) * k,
+    };
+    zoomRef.current = newZoom;
+    marcarGesto();
+  }, [marcarGesto]);
+
+  // Mismo patron que `fitToBoundsRef`: el handle imperativo (mas arriba, se
+  // crea una sola vez) necesita la version ACTUAL de `zoomStep` sin volver a
+  // recrearse el resto de sus metodos.
+  const zoomStepRef = useRef(zoomStep);
+  useEffect(() => {
+    zoomStepRef.current = zoomStep;
+  }, [zoomStep]);
+
   // HIGH PERFORMANCE RENDER LOOP
   useEffect(() => {
     const render = () => {
@@ -2558,6 +2666,12 @@ const ViewerBase = forwardRef<ViewerHandle, ViewerProps>(({ doc, fileId, layerCo
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
+    // Un movimiento de verdad (arrastre o pellizco) no es parte de una
+    // secuencia de toques rapidos: sin esto, tocar-arrastrar-tocar-arrastrar
+    // dentro de la ventana de 300 ms de `handleTouchStart` podia acumular
+    // hasta 3 "toques" e interpretarse como el triple-tap que reencuadra
+    // todo, en medio de un paneo normal.
+    tapCountRef.current = 0;
     if (e.touches.length === 1 && isDragging) {
       panRef.current = {
         x: e.touches[0].clientX - dragStartRef.current.x,
@@ -2841,8 +2955,12 @@ const ViewerBase = forwardRef<ViewerHandle, ViewerProps>(({ doc, fileId, layerCo
       {isRightDragging && (
         <div style={{
           position: 'absolute',
-          left: rightDragStartPos.x - (containerRef.current?.getBoundingClientRect().left || 0),
-          top: rightDragStartPos.y - (containerRef.current?.getBoundingClientRect().top || 0),
+          // `dragRectRef` ya tiene el rect cacheado desde que arranco el gesto
+          // (ver `handleMouseDown`/`handleTouchStart`): reusarlo evita DOS
+          // layouts sincronicos por frame durante todo el pinch/zoom con boton
+          // derecho, que es exactamente cuando este indicador esta visible.
+          left: rightDragStartPos.x - (dragRectRef.current?.left ?? 0),
+          top: rightDragStartPos.y - (dragRectRef.current?.top ?? 0),
           width: '16px',
           height: '16px',
           marginLeft: '-8px',

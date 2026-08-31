@@ -8,7 +8,7 @@ import {
 import { listDriveFolder, driveFileUrl, driveAuthHeaders } from "./driveClient";
 import type { DriveFolderRef, DriveListing } from "./driveClient";
 import { fetchCachedThumbnails, upsertThumbnail, fetchAllFolderCache, upsertFolderCache } from "./supabaseClient";
-import type { FolderCacheRow } from "./supabaseClient";
+import type { FolderCacheRow, ThumbnailRow } from "./supabaseClient";
 import { thumbnailDeArchivo } from "./thumbnail";
 import { renderDocumentEntry, exportSectionsAsPdf, exportSectionsAsZip } from "./exportRender";
 import type { ExportSection } from "./exportRender";
@@ -128,6 +128,8 @@ const TarjetaArchivo = memo(function TarjetaArchivo({
         type="button"
         className={`gallery-checkbox ${checked ? "checked" : ""}`}
         onClick={(e) => onToggleCheck(e, { kind: "file", id: item.id, name: item.name })}
+        role="checkbox"
+        aria-checked={checked}
         aria-label={checked ? "Deseleccionar" : "Seleccionar"}
       >
         {checked ? <CheckCircle2 size={20} /> : <Circle size={20} />}
@@ -219,6 +221,33 @@ export function Gallery({ hidden, userName, onOpen, onUpload, rutaInicial, onRut
   // entrar/salir de ella es instantaneo: no hace falta pegarle a Drive.
   const folderTreeCacheRef = useRef<Map<string, FolderCacheRow>>(new Map());
   const folderTreeLoadedRef = useRef(false);
+  /**
+   * Miniaturas ya traidas de Supabase en esta sesion, por id de archivo.
+   *
+   * Antes `loadFolder` pegaba a Supabase por las miniaturas CADA vez que se
+   * entraba a una carpeta, aunque el listado (`folderTreeCacheRef`, arriba)
+   * ya estuviera cacheado y la carpeta se hubiera visitado hace un segundo
+   * -- volver "atras" y "adelante" en el arbol bajaba la misma data una y
+   * otra vez. Se guarda aca la fila entera (incluye `source_modified_at`,
+   * que es lo que despues decide si la miniatura sigue siendo valida), asi
+   * que el chequeo de "el archivo cambio desde que se genero la miniatura"
+   * de mas abajo sigue funcionando igual este dato venga de red o de aca.
+   */
+  const thumbnailCacheRef = useRef<Map<string, ThumbnailRow>>(new Map());
+
+  // Cerrar los modales dismissibles con Escape. `exportProgress` queda afuera
+  // a proposito: no tiene boton de cancelar (la descarga ya esta en curso),
+  // asi que Escape ahi no tendria nada que hacer.
+  useEffect(() => {
+    if (!showFormatPicker && !confirmarReset) return;
+    const alEscape = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      setShowFormatPicker(false);
+      setConfirmarReset(false);
+    };
+    document.addEventListener("keydown", alEscape);
+    return () => document.removeEventListener("keydown", alEscape);
+  }, [showFormatPicker, confirmarReset]);
 
   useEffect(() => {
     itemsRef.current = items;
@@ -331,7 +360,15 @@ export function Gallery({ hidden, userName, onOpen, onUpload, rutaInicial, onRut
 
         setFolders(listing.folders);
 
-        const cache = await fetchCachedThumbnails(listing.files.map((f) => f.id));
+        // Solo se pide a Supabase lo que todavia no esta en el cache de esta
+        // sesion. Con una carpeta ya visitada (volver atras, o el refresh
+        // periodico), eso es normalmente CERO ids -- cero requests.
+        const idsFaltantes = listing.files.map((f) => f.id).filter((id) => !thumbnailCacheRef.current.has(id));
+        if (idsFaltantes.length > 0) {
+          const traidas = await fetchCachedThumbnails(idsFaltantes);
+          traidas.forEach((row, id) => thumbnailCacheRef.current.set(id, row));
+        }
+        const cache = thumbnailCacheRef.current;
         const prevById = new Map(itemsRef.current.map((it) => [it.id, it]));
 
         const nextItems: GalleryItem[] = listing.files.map((f) => {
@@ -806,7 +843,7 @@ export function Gallery({ hidden, userName, onOpen, onUpload, rutaInicial, onRut
       </div>
 
       {pendingCount > 0 && (
-        <div className="gallery-status">
+        <div className="gallery-status" role="status" aria-live="polite">
           <RefreshCw size={13} className="spin-slow" />
           Generando miniaturas: {items.length - pendingCount} de {items.length}
           {cachedCount > 0 ? ` (${cachedCount} desde cache)` : ""}
@@ -880,6 +917,8 @@ export function Gallery({ hidden, userName, onOpen, onUpload, rutaInicial, onRut
                       type="button"
                       className={`gallery-checkbox ${checked ? "checked" : ""}`}
                       onClick={(e) => handleCheckboxClick(e, { kind: "folder", id: folder.id, name: folder.name })}
+                      role="checkbox"
+                      aria-checked={checked}
                       aria-label={checked ? "Deseleccionar carpeta" : "Seleccionar carpeta"}
                     >
                       {checked ? <CheckCircle2 size={20} /> : <Circle size={20} />}
@@ -915,6 +954,8 @@ export function Gallery({ hidden, userName, onOpen, onUpload, rutaInicial, onRut
         {toast && (
           <m.div
             className="gallery-toast"
+            role="status"
+            aria-live="polite"
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
@@ -959,13 +1000,16 @@ export function Gallery({ hidden, userName, onOpen, onUpload, rutaInicial, onRut
           >
             <m.div
               className="gallery-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="titulo-modal-formato"
               onClick={(e) => e.stopPropagation()}
               initial={{ opacity: 0, scale: 0.92, y: 16 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.94, y: 10 }}
               transition={{ type: "spring", stiffness: 320, damping: 26 }}
             >
-              <h3>Descargar {selectedCount} elemento{selectedCount === 1 ? "" : "s"}</h3>
+              <h3 id="titulo-modal-formato">Descargar {selectedCount} elemento{selectedCount === 1 ? "" : "s"}</h3>
               <p>Elegi el formato de descarga.</p>
               <div className="gallery-modal-options">
                 <button className="gallery-modal-option" onClick={() => handleDownload("pdf")}>
@@ -999,13 +1043,16 @@ export function Gallery({ hidden, userName, onOpen, onUpload, rutaInicial, onRut
           >
             <m.div
               className="gallery-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="titulo-modal-reset"
               onClick={(e) => e.stopPropagation()}
               initial={{ opacity: 0, scale: 0.92, y: 16 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.94, y: 10 }}
               transition={{ type: "spring", stiffness: 320, damping: 26 }}
             >
-              <h3>Restablecer</h3>
+              <h3 id="titulo-modal-reset">Restablecer</h3>
               <p>
                 Se borra todo lo guardado en <strong>este dispositivo</strong>: el cache de dibujos ya
                 abiertos, la lista de recientes, tu nombre y el tema. No se borra nada de Drive ni de
@@ -1038,6 +1085,8 @@ export function Gallery({ hidden, userName, onOpen, onUpload, rutaInicial, onRut
           >
             <m.div
               className="gallery-modal"
+              role="status"
+              aria-live="polite"
               initial={{ opacity: 0, scale: 0.92 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.94 }}

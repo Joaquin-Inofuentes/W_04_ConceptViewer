@@ -9,7 +9,13 @@ import { InteractivePreview } from './InteractivePreview';
 import { logDescarga } from '../Gallery/analytics';
 import { driveFileUrl, driveAuthHeaders } from '../Gallery/driveClient';
 import type { FileSourceRef } from '../App';
-import { Eye, EyeOff, Lock, Filter, Image as ImageIcon, X, Download, Maximize2 } from 'lucide-react';
+import {
+  Eye, EyeOff, Lock, Filter, Image as ImageIcon, X, Download, Maximize2,
+  ZoomIn, ZoomOut, Maximize, Minimize, Sun, Moon,
+  ChevronLeft, ChevronRight, Link2, Check, Keyboard,
+} from 'lucide-react';
+import { alternarTema, temaGuardado } from '../theme';
+import type { Tema } from '../theme';
 import './App.css';
 
 interface ViewerProps {
@@ -302,7 +308,68 @@ export function ConceptViewer({ source, onClose }: ViewerProps) {
   const [showLayerMenu, setShowLayerMenu] = useState(false);
   const [showImageMenu, setShowImageMenu] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
-  
+
+  // Tema del visor abierto: antes solo se podia cambiar desde la galeria (hay
+  // que cerrar el dibujo para volver a verla), asi que alguien mirando un
+  // plano de noche quedaba pegado al tema con el que abrio. El propio Viewer
+  // ya escucha el evento "concepts:tema" (ver Viewer.tsx) para repintar el
+  // lienzo, asi que alcanza con alternarlo aca igual que hace la galeria.
+  const [tema, setTema] = useState<Tema>(() => temaGuardado());
+  const alternarTemaViewer = useCallback(() => setTema(alternarTema()), []);
+
+  // Fullscreen real del navegador (distinto de "ver todo el dibujo": ese
+  // encuadra el CONTENIDO, este oculta la barra del navegador). Se escucha
+  // `fullscreenchange` en vez de confiar solo en el propio click porque el
+  // usuario puede salir con Esc o F11, que no pasan por este boton.
+  const [enFullscreen, setEnFullscreen] = useState(false);
+  useEffect(() => {
+    const alCambiar = () => setEnFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', alCambiar);
+    return () => document.removeEventListener('fullscreenchange', alCambiar);
+  }, []);
+  // Navegacion entre laminas: en dibujos con varios PDF colocados (un plano
+  // por piso, por ejemplo) ir a buscar cada uno a mano con pan/zoom es
+  // tedioso. El indice es circular (vuelve al primero despues del ultimo) y
+  // vive en un ref ademas de en estado: los botones necesitan leer el total
+  // ACTUAL de planos (que llega recien cuando `doc` esta listo) sin agregar
+  // ese valor como dependencia de los callbacks.
+  const [planoActual, setPlanoActual] = useState(0);
+  useEffect(() => setPlanoActual(0), [doc]);
+  const irAPlano = useCallback((delta: number) => {
+    const total = viewerRef.current?.cantidadPlanos() ?? 0;
+    if (total === 0) return;
+    setPlanoActual((actual) => {
+      const siguiente = ((actual + delta) % total + total) % total;
+      viewerRef.current?.irAPlano(siguiente);
+      return siguiente;
+    });
+  }, []);
+
+  const [enlaceCopiado, setEnlaceCopiado] = useState(false);
+  const copiarEnlace = useCallback(() => {
+    void navigator.clipboard.writeText(window.location.href).then(() => {
+      setEnlaceCopiado(true);
+      setTimeout(() => setEnlaceCopiado(false), 1500);
+    });
+  }, []);
+
+  const [showAtajos, setShowAtajos] = useState(false);
+  const atajosMenuRef = useRef<HTMLDivElement>(null);
+
+  const alternarFullscreen = useCallback(() => {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen();
+    } else {
+      // El contenedor del visor entero (no solo el canvas): asi la barra de
+      // herramientas y el boton de cerrar siguen visibles en fullscreen.
+      void document.documentElement.requestFullscreen().catch(() => {
+        // Algunos navegadores (Safari de escritorio viejo, ciertos webviews)
+        // no soportan la API o la rechazan; sin este catch, un click ahi
+        // tiraba un unhandled rejection a la consola sin ningun efecto visible.
+      });
+    }
+  }, []);
+
   // Image Thumbnails & Preview State
   const [imageUrls, setImageUrls] = useState<Record<string, string>>({});
   // La miniatura de la galeria (`imageUrls[id]`) es una previsualizacion
@@ -410,12 +477,51 @@ export function ConceptViewer({ source, onClose }: ViewerProps) {
         setShowLayerMenu(false);
         setShowImageMenu(false);
         setShowExportMenu(false);
+        setShowAtajos(false);
         cerrarFoto();
+        return;
+      }
+      // Atajos de zoom/navegacion. Se ignoran si el foco esta en un campo de
+      // formulario (el slider de opacidad de capas usa +/-/flechas para SU
+      // propio valor; sin esta guarda, tocar el slider tambien movia el
+      // lienzo entero por debajo).
+      const activo = document.activeElement;
+      const enCampo = activo && /^(INPUT|TEXTAREA|SELECT)$/.test(activo.tagName);
+      if (enCampo || previewImage) return;
+      switch (e.key) {
+        case '+':
+        case '=':
+          e.preventDefault();
+          viewerRef.current?.zoomIn();
+          break;
+        case '-':
+        case '_':
+          e.preventDefault();
+          viewerRef.current?.zoomOut();
+          break;
+        case '0':
+          viewerRef.current?.zoomAll();
+          break;
+        case 'f':
+        case 'F':
+          alternarFullscreen();
+          break;
+        case ']':
+        case 'ArrowRight':
+          if (e.key === ']' || e.altKey) irAPlano(1);
+          break;
+        case '[':
+        case 'ArrowLeft':
+          if (e.key === '[' || e.altKey) irAPlano(-1);
+          break;
+        case '?':
+          setShowAtajos((v) => !v);
+          break;
       }
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [cerrarFoto]);
+  }, [cerrarFoto, previewImage, alternarFullscreen, irAPlano]);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent | TouchEvent) => {
@@ -430,8 +536,11 @@ export function ConceptViewer({ source, onClose }: ViewerProps) {
       if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) {
         setShowExportMenu(false);
       }
+      if (atajosMenuRef.current && !atajosMenuRef.current.contains(e.target as Node)) {
+        setShowAtajos(false);
+      }
     };
-    if (showLayerMenu || showImageMenu || showExportMenu) {
+    if (showLayerMenu || showImageMenu || showExportMenu || showAtajos) {
       document.addEventListener('mousedown', handleClickOutside, true);
       document.addEventListener('touchstart', handleClickOutside, true);
     }
@@ -439,7 +548,7 @@ export function ConceptViewer({ source, onClose }: ViewerProps) {
       document.removeEventListener('mousedown', handleClickOutside, true);
       document.removeEventListener('touchstart', handleClickOutside, true);
     };
-  }, [showLayerMenu, showImageMenu, showExportMenu, previewImage]);
+  }, [showLayerMenu, showImageMenu, showExportMenu, showAtajos, previewImage]);
 
   useEffect(() => {
     setRecursosListos(false);
@@ -605,6 +714,37 @@ export function ConceptViewer({ source, onClose }: ViewerProps) {
   // Viewer.
   const alFallar = useCallback((cuantos: number) => setFallidos(cuantos), []);
 
+  // Avisos no bloqueantes del export ("lienzo vacio", "se recorto la
+  // resolucion"). Antes el primero era un alert() -- congelaba TODO,
+  // incluido el render loop del canvas -- y el segundo solo iba a la
+  // consola. Se auto-oculta: es feedback de un click puntual, no un estado
+  // persistente del documento (a diferencia de `fallidos`, que si lo es).
+  // Que formato se esta exportando ahora mismo (o null). Antes los tres
+  // botones quedaban clickeables durante todo el export -- un doble click en
+  // "PDF" disparaba DOS exports en paralelo, cada uno rasterizando de nuevo
+  // los mismos recursos a resolucion de papel, y no habia ninguna señal de
+  // que el primer click ya habia hecho algo (el archivo tarda varios
+  // segundos en generarse, sobre todo con PDFs pesados).
+  const [exportando, setExportando] = useState<'pdf' | 'jpg' | 'png' | null>(null);
+  const ejecutarExport = useCallback(async (formato: 'pdf' | 'jpg' | 'png') => {
+    if (exportando) return;
+    setExportando(formato);
+    try {
+      await viewerRef.current?.exportDrawing(formato, exportZoomAll);
+      logDescarga('lienzo', formato, [], fileName);
+    } finally {
+      setExportando(null);
+    }
+  }, [exportando, exportZoomAll, fileName]);
+
+  const [exportAviso, setExportAviso] = useState<string | null>(null);
+  const exportAvisoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const alExportNotice = useCallback((mensaje: string) => {
+    setExportAviso(mensaje);
+    if (exportAvisoTimerRef.current) clearTimeout(exportAvisoTimerRef.current);
+    exportAvisoTimerRef.current = setTimeout(() => setExportAviso(null), 5000);
+  }, []);
+
   // useCallback con identidad estable: son props de `LayerMenu`/`ImageMenu`
   // (memoizados, ver sus comentarios), asi que si estos fueran arrows
   // nuevas en cada render de `ConceptViewer` el memo no serviria de nada.
@@ -717,6 +857,109 @@ export function ConceptViewer({ source, onClose }: ViewerProps) {
           <Maximize2 size={20} />
         </button>
 
+        <button
+          className="btn-tool"
+          onClick={() => viewerRef.current?.zoomIn()}
+          title="Acercar"
+          aria-label="Acercar"
+        >
+          <ZoomIn size={20} />
+        </button>
+
+        <button
+          className="btn-tool"
+          onClick={() => viewerRef.current?.zoomOut()}
+          title="Alejar"
+          aria-label="Alejar"
+        >
+          <ZoomOut size={20} />
+        </button>
+
+        {/* Solo tiene sentido con mas de un plano colocado: con uno solo
+            "siguiente" volveria al mismo (indice circular). */}
+        {stats.images > 1 && (
+          <>
+            <button
+              className="btn-tool"
+              onClick={() => irAPlano(-1)}
+              title="Plano anterior ([)"
+              aria-label="Plano anterior"
+            >
+              <ChevronLeft size={20} />
+            </button>
+            <span className="plano-indicador" aria-live="polite">
+              {planoActual + 1}/{stats.images}
+            </span>
+            <button
+              className="btn-tool"
+              onClick={() => irAPlano(1)}
+              title="Plano siguiente (])"
+              aria-label="Plano siguiente"
+            >
+              <ChevronRight size={20} />
+            </button>
+          </>
+        )}
+
+        <button
+          className="btn-tool"
+          onClick={alternarFullscreen}
+          title={enFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa'}
+          aria-label={enFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa'}
+        >
+          {enFullscreen ? <Minimize size={20} /> : <Maximize size={20} />}
+        </button>
+
+        <button
+          className="btn-tool"
+          onClick={alternarTemaViewer}
+          title={tema === 'oscuro' ? 'Cambiar a tema claro' : 'Cambiar a tema oscuro'}
+          aria-label={tema === 'oscuro' ? 'Cambiar a tema claro' : 'Cambiar a tema oscuro'}
+        >
+          {tema === 'oscuro' ? <Sun size={20} /> : <Moon size={20} />}
+        </button>
+
+        {/* Copiar enlace: solo tiene sentido para un dibujo de la galeria
+            (Drive), que es lo unico que deja una URL compartible -- un
+            archivo subido a mano (`source.kind === 'local'`) no tiene de
+            donde volver a abrirse, asi que el boton ni aparece. */}
+        {source.kind === 'remote' && (
+          <button
+            className="btn-tool"
+            onClick={copiarEnlace}
+            title={enlaceCopiado ? 'Enlace copiado' : 'Copiar enlace'}
+            aria-label={enlaceCopiado ? 'Enlace copiado' : 'Copiar enlace'}
+          >
+            {enlaceCopiado ? <Check size={20} /> : <Link2 size={20} />}
+          </button>
+        )}
+
+        <div className="dropdown-container" ref={atajosMenuRef}>
+          <button
+            className={`btn-tool ${showAtajos ? 'active-glow' : ''}`}
+            onClick={() => setShowAtajos((v) => !v)}
+            title="Atajos de teclado"
+            aria-label="Atajos de teclado"
+          >
+            <Keyboard size={20} />
+          </button>
+          {showAtajos && (
+            <div className="dropdown-menu atajos-menu">
+              <div className="layer-menu-header">
+                <span>Atajos de teclado</span>
+              </div>
+              <ul className="atajos-lista">
+                <li><kbd>+</kbd> / <kbd>-</kbd><span>Acercar / alejar</span></li>
+                <li><kbd>0</kbd><span>Ver todo el dibujo</span></li>
+                <li><kbd>[</kbd> / <kbd>]</kbd><span>Plano anterior / siguiente</span></li>
+                <li><kbd>F</kbd><span>Pantalla completa</span></li>
+                <li><kbd>Esc</kbd><span>Cerrar menus / foto</span></li>
+                <li><kbd>?</kbd><span>Mostrar esta ayuda</span></li>
+              </ul>
+            </div>
+          )}
+        </div>
+
         <div className="dropdown-container" ref={exportMenuRef}>
           <button
             className={`btn-tool ${showExportMenu ? 'active-glow' : ''}`}
@@ -737,9 +980,15 @@ export function ConceptViewer({ source, onClose }: ViewerProps) {
                   <input type="checkbox" checked={exportZoomAll} onChange={(e) => setExportZoomAll(e.target.checked)} />
                   Completo
                 </label>
-                <button className="btn btn-tiny" style={{ marginBottom: '4px', padding: '8px' }} onClick={() => { viewerRef.current?.exportDrawing('pdf', exportZoomAll); logDescarga('lienzo', 'pdf', [], fileName); }}>📄 PDF</button>
-                <button className="btn btn-tiny" style={{ marginBottom: '4px', padding: '8px' }} onClick={() => { viewerRef.current?.exportDrawing('jpg', exportZoomAll); logDescarga('lienzo', 'jpg', [], fileName); }}>🖼 JPG</button>
-                <button className="btn btn-tiny" style={{ padding: '8px' }} onClick={() => { viewerRef.current?.exportDrawing('png', exportZoomAll); logDescarga('lienzo', 'png', [], fileName); }}>💠 PNG</button>
+                <button className="btn btn-tiny" style={{ marginBottom: '4px', padding: '8px' }} disabled={!!exportando} onClick={() => ejecutarExport('pdf')}>
+                  {exportando === 'pdf' ? 'Exportando…' : '📄 PDF'}
+                </button>
+                <button className="btn btn-tiny" style={{ marginBottom: '4px', padding: '8px' }} disabled={!!exportando} onClick={() => ejecutarExport('jpg')}>
+                  {exportando === 'jpg' ? 'Exportando…' : '🖼 JPG'}
+                </button>
+                <button className="btn btn-tiny" style={{ padding: '8px' }} disabled={!!exportando} onClick={() => ejecutarExport('png')}>
+                  {exportando === 'png' ? 'Exportando…' : '💠 PNG'}
+                </button>
               </div>
             </div>
           )}
@@ -789,6 +1038,7 @@ export function ConceptViewer({ source, onClose }: ViewerProps) {
             onBytesPrevistos={alPreverBytes}
             onFallidos={alFallar}
             onCoberturaLista={alCoberturaLista}
+            onExportNotice={alExportNotice}
           />
           {/* Al acercarse, los planos se vuelven a rasterizar a mas resolucion.
               Mientras tanto se sigue viendo la version anterior, y sin avisar
@@ -818,6 +1068,11 @@ export function ConceptViewer({ source, onClose }: ViewerProps) {
           {fallidos > 0 && (
             <div className="viewer-fallidos" role="status">
               {fallidos} plano{fallidos === 1 ? '' : 's'} no se pudo cargar
+            </div>
+          )}
+          {exportAviso && (
+            <div className="viewer-export-aviso" role="status" onClick={() => setExportAviso(null)}>
+              {exportAviso}
             </div>
           )}
           {placeholder && doc.resourceIds.length > 0 && !recursosListos && !previaDescartada && (
