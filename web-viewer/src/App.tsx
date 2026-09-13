@@ -10,6 +10,7 @@ import { DEMO_FILE_ID, DEMO_FILE_NAME } from './config';
 import { applyTierFromUrl } from './device';
 import { temaGuardado, aplicarTema } from './theme';
 import { construirRuta, leerRuta, irA, aSlug } from './rutas';
+import { fase, listo } from './lib/centinela';
 import './index.css';
 
 // El visor (parser + zip + pdf.js + jspdf) se carga recien cuando se abre un
@@ -38,6 +39,10 @@ applyTierFromUrl();
 // El script inline de index.html ya puso data-theme antes de pintar; esto
 // sincroniza el estado por si el HTML se sirvio cacheado sin el script.
 aplicarTema(temaGuardado());
+// Se marca aca, no en un useEffect: este modulo ya termino de evaluarse (es
+// el momento mas temprano posible), y un useEffect corre un tick despues del
+// primer render, que para "el bundle ya esta" es tarde de mas.
+fase('bundle');
 
 function App() {
   const [fileData, setFileData] = useState<FileSourceRef | null>(null);
@@ -88,6 +93,9 @@ function App() {
       closedRef.current = false;
       hayDibujoRef.current = true;
       setFileData({ kind: 'remote', fileId, name, originRect, ruta });
+      // Traza, no arranque: listo() ya se llamo con la galeria. Sirve para
+      // que la fila de un F4005 diga en que dibujo paso.
+      fase(`dibujo:${fileId}`);
       // La URL pasa a apuntar al dibujo, asi el link se puede compartir.
       irA(construirRuta(ruta, name));
       void registrarAbierto({ id: fileId, nombre: name, ruta, slug: construirRuta(ruta, name) });
@@ -228,6 +236,7 @@ function App() {
         onUpload={openLocal}
         rutaInicial={rutaInicial}
         onRutaCambio={alCambiarRutaCarpeta}
+        onListo={listo}
       />
       {!userName && <NamePrompt onSubmit={submitUserName} />}
       <AnimatePresence>

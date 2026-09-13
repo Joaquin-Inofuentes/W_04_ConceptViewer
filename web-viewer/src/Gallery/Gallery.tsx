@@ -23,6 +23,7 @@ import { listarRecientes, vaciarRecientes } from "./recientes";
 import type { Reciente } from "./recientes";
 import { vaciarCache, invalidarSiCambio } from "./rasterCache";
 import { getBudgets } from "../device";
+import { fase } from "../lib/centinela";
 import "./Gallery.css";
 
 type ItemStatus = "queued" | "processing" | "ready" | "error";
@@ -61,6 +62,10 @@ interface GalleryProps {
   rutaInicial?: string[];
   /** Avisa la ruta actual para que App actualice la URL. */
   onRutaCambio?: (ruta: string[]) => void;
+  /** Avisa que la galeria ya pinto su primera carpeta (con o sin error): es
+   * el momento "listo" del centinela para este modulo. Se llama una sola
+   * vez, no en cada refresh ni al navegar entre carpetas. */
+  onListo?: () => void;
 }
 
 const EASE_IOS: [number, number, number, number] = [0.16, 1, 0.3, 1];
@@ -177,7 +182,7 @@ async function runPool<T>(items: T[], limit: number, worker: (item: T) => Promis
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => next()));
 }
 
-export function Gallery({ hidden, userName, onOpen, onUpload, rutaInicial, onRutaCambio }: GalleryProps) {
+export function Gallery({ hidden, userName, onOpen, onUpload, rutaInicial, onRutaCambio, onListo }: GalleryProps) {
   const [tema, setTema] = useState<Tema>(() => temaGuardado());
   const [recientes, setRecientes] = useState<Reciente[]>([]);
   const [confirmarReset, setConfirmarReset] = useState(false);
@@ -215,6 +220,10 @@ export function Gallery({ hidden, userName, onOpen, onUpload, rutaInicial, onRut
    * quedaba donde estaba.
    */
   const rutaResueltaRef = useRef<string | null>(null);
+  /** El centinela ya recibio `fase('lista')`/`listo()` para esta sesion: la
+   * primera carpeta (con o sin error) alcanza, no hace falta repetirlo en
+   * cada refresh ni al navegar a otra carpeta. */
+  const arranqueAvisadoRef = useRef(false);
   const toastTimerRef = useRef<number | null>(null);
   // Arbol de carpetas ya visitadas/crawleadas (solo ids/nombres), traido
   // entero de Supabase una vez al montar. Mientras una carpeta este aca,
@@ -344,6 +353,11 @@ export function Gallery({ hidden, userName, onOpen, onUpload, rutaInicial, onRut
           void upsertFolderCache(folderId, folderName, listing.folders, listing.files);
         }
 
+        // La respuesta de `action=list` de la raiz (cacheada o en vivo, las
+        // dos son "la lista ya llego"): solo en la carga inicial, no en cada
+        // refresh ni al entrar/salir de subcarpetas.
+        if (!isRefresh && !arranqueAvisadoRef.current) fase("lista");
+
         if (isRefresh) {
           const prevFolderIds = new Set(foldersRef.current.map((f) => f.id));
           const newFolderIds = new Set(listing.folders.map((f) => f.id));
@@ -428,9 +442,20 @@ export function Gallery({ hidden, userName, onOpen, onUpload, rutaInicial, onRut
         if (!isRefresh) setListLoading(false);
       } finally {
         setRefreshing(false);
+        // "listo" es la galeria pintada (con datos o con el error ya
+        // mostrado), no "las miniaturas de las 40 tarjetas terminaron de
+        // generarse": eso sigue en `pendingCount` y no bloquea el uso. Se
+        // agenda un frame para avisar DESPUES de que React pinte, no antes.
+        if (!isRefresh && !arranqueAvisadoRef.current) {
+          arranqueAvisadoRef.current = true;
+          requestAnimationFrame(() => {
+            fase("render");
+            onListo?.();
+          });
+        }
       }
     },
-    [processItem]
+    [processItem, onListo]
   );
 
   useEffect(() => {

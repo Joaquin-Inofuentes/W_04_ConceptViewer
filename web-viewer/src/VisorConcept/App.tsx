@@ -16,6 +16,8 @@ import {
 } from 'lucide-react';
 import { alternarTema, temaGuardado } from '../theme';
 import type { Tema } from '../theme';
+import { fallo } from '../lib/centinela';
+import { codigoDeErrorDescarga, parseRangoFallido } from '../lib/erroresDescarga';
 import './App.css';
 
 interface ViewerProps {
@@ -234,6 +236,13 @@ export function ConceptViewer({ source, onClose }: ViewerProps) {
   const fileId = source.kind === 'remote' ? source.fileId : null;
   const [doc, setDoc] = useState<Document | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Codigo del catalogo del fallo que dejo `error` (F4001/F4002/F4003/F4005),
+   * para mostrarlo junto al mensaje: "no un spinner eterno" (F2_MODULOS.md
+   * R2-04) tambien significa que la persona tenga algo para mandar. */
+  const [errorCodigo, setErrorCodigo] = useState<string | null>(null);
+  /** Se incrementa con el boton "Reintentar": esta en las deps del efecto de
+   * abajo, asi que fuerza a repetir la apertura sin cambiar `source`. */
+  const [intentoReintento, setIntentoReintento] = useState(0);
   const [stats, setStats] = useState<{ layers: number; strokes: number; images: number } | null>(null);
   // Vista previa que Concepts guarda dentro del archivo. Se muestra apenas
   // llega (~110 KB por rangos, menos de un segundo) mientras se decodifica el
@@ -558,6 +567,7 @@ export function ConceptViewer({ source, onClose }: ViewerProps) {
     setDoc(null);
     setStats(null);
     setError(null);
+    setErrorCodigo(null);
     if (coberturaTimeoutRef.current) clearTimeout(coberturaTimeoutRef.current);
     coberturaTimeoutRef.current = setTimeout(() => {
       coberturaTimeoutRef.current = null;
@@ -567,6 +577,22 @@ export function ConceptViewer({ source, onClose }: ViewerProps) {
     faseDibujandoRef.current = false;
     let docCreado: Document | null = null;
     let urlPlaceholder: string | null = null;
+
+    // Reporta al centinela un fallo al abrir/leer el .concepts, con el
+    // codigo del catalogo que corresponda (F4005 para el 502 conocido de
+    // concepts-drive por rango; el arreglo de fondo es R3-01, aca solo hay
+    // que reportarlo y mostrar el estado honesto). `fileId` solo si el
+    // origen es remoto: un archivo local no tiene nada que ver con el proxy.
+    const reportarFalloDescarga = (err: unknown) => {
+      const codigo = codigoDeErrorDescarga(err);
+      setErrorCodigo(codigo);
+      const mensaje = err instanceof Error ? err.message : String(err);
+      const detalleRango = parseRangoFallido(mensaje);
+      fallo(codigo, {
+        fileId: source.kind === 'remote' ? source.fileId : undefined,
+        ...(detalleRango || {}),
+      });
+    };
 
     const seguidor = new SeguidorProgreso((e) => {
       if (!cancelado) setProgreso(e);
@@ -588,7 +614,10 @@ export function ConceptViewer({ source, onClose }: ViewerProps) {
               })
             : await openConceptsLocal(source.file);
       } catch (err: any) {
-        if (!cancelado) setError(err?.message || 'No se pudo abrir el archivo');
+        if (!cancelado) {
+          setError(err?.message || 'No se pudo abrir el archivo');
+          reportarFalloDescarga(err);
+        }
         return;
       }
       if (cancelado) {
@@ -614,7 +643,10 @@ export function ConceptViewer({ source, onClose }: ViewerProps) {
       // Sin vista previa (fallo o el archivo no la trae) se sigue igual.
 
       if (resDoc.status === 'rejected') {
-        if (!cancelado) setError(resDoc.reason?.message || 'Error al cargar el archivo');
+        if (!cancelado) {
+          setError(resDoc.reason?.message || 'Error al cargar el archivo');
+          reportarFalloDescarga(resDoc.reason);
+        }
       } else {
         seguidor.cambiarFase('procesando', 'trazos y capas');
         const parsedDoc = resDoc.value;
@@ -661,7 +693,11 @@ export function ConceptViewer({ source, onClose }: ViewerProps) {
         coberturaTimeoutRef.current = null;
       }
     };
-  }, [source]);
+    // `intentoReintento`: el boton "Reintentar" de la pantalla de error lo
+    // incrementa para forzar que este efecto se repita con el MISMO
+    // `source` (sin esto, reabrir el mismo dibujo tras un fallo no hacia
+    // nada: las deps no habian cambiado).
+  }, [source, intentoReintento]);
 
   // Los callbacks que recibe el Viewer se declaran con identidad ESTABLE.
   //
@@ -807,9 +843,19 @@ export function ConceptViewer({ source, onClose }: ViewerProps) {
     return (
       <div className="app-container">
         <div className="error-state">
-          <h3>Error</h3>
+          <h3>No se pudo abrir el dibujo</h3>
           <p>{error}</p>
-          <button className="btn" onClick={onClose}>Cerrar</button>
+          {/* El codigo es lo que la persona manda por WhatsApp; sin el, un
+              "no se pudo abrir" no dice nada para buscar en la tabla. */}
+          {errorCodigo && (
+            <p style={{ fontSize: '0.8rem', opacity: 0.7 }}>Código: {errorCodigo}</p>
+          )}
+          <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
+            <button className="btn" onClick={() => setIntentoReintento((n) => n + 1)}>
+              Reintentar
+            </button>
+            <button className="btn" onClick={onClose}>Cerrar</button>
+          </div>
         </div>
       </div>
     );
