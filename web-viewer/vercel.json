@@ -31,5 +31,6 @@
     }
   ],
   "buildCommand": "npm run build && node -e \"require('fs').writeFileSync('dist/version.txt', process.env.VERCEL_GIT_COMMIT_SHA || 'local')\"",
-  "outputDirectory": "dist"
+  "outputDirectory": "dist",
+  "installCommand": "npm install"
 }
