@@ -2,13 +2,41 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "rewrites": [
     {
+      "source": "/concept/assets/(.*)",
+      "destination": "/assets/$1"
+    },
+    {
+      "source": "/concept/escucha-accesos.js",
+      "destination": "/escucha-accesos.js"
+    },
+    {
+      "source": "/concept/favicon.svg",
+      "destination": "/favicon.svg"
+    },
+    {
+      "source": "/concept/icons.svg",
+      "destination": "/icons.svg"
+    },
+    {
+      "source": "/concept/version.txt",
+      "destination": "/version.txt"
+    },
+    {
+      "source": "/concept/(.*)",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/concept",
+      "destination": "/index.html"
+    },
+    {
       "source": "/((?!assets/).*)",
       "destination": "/index.html"
     }
   ],
   "headers": [
     {
-      "source": "/assets/(.*)",
+      "source": "/(concept/)?assets/(.*)",
       "headers": [
         {
           "key": "Cache-Control",

@@ -3,6 +3,23 @@ import react from '@vitejs/plugin-react'
 
 // https://vite.dev/config/
 export default defineConfig({
+  /*
+   * Todo vive bajo /concept/.
+   *
+   * Esta app rutea por pathname real (ver src/rutas.ts): la galeria raiz es
+   * "/" y un dibujo es "/carpeta/archivo". En su dominio propio eso esta bien,
+   * pero detras del gateway de babelbim.com se lleva puesto todo: entrar a
+   * /concept dejaba la barra de direcciones en "https://babelbim.com/", que
+   * para el gateway es SIEMPRE el Portal. O sea que recargar adentro de
+   * Concept, o pasarle el link a alguien, te depositaba en el Portal. Y una
+   * carpeta escribia "/guada-y-flor-re/concepts", que choca con los prefijos
+   * de los otros diez modulos.
+   *
+   * Con `base` los assets salen bajo /concept/ y rutas.ts antepone el mismo
+   * prefijo, asi que la URL vuelve a describir donde estas. Es el mismo
+   * arreglo que ya tienen Files, Restaurador y Admin.
+   */
+  base: "/concept/",
   plugins: [react()],
   optimizeDeps: {
     // `pdfjs-dist` solo se importa dentro de `raster.worker.ts` (un Worker),

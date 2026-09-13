@@ -16,6 +16,18 @@
  * la ruta al volver a partirla.
  */
 
+/**
+ * El prefijo bajo el que se sirve la app. Tiene que coincidir con el `base` de
+ * vite.config.ts y con el slug del gateway.
+ *
+ * Sin esto la app escribia "/" y "/carpeta/archivo" en la barra de
+ * direcciones de babelbim.com, donde "/" es SIEMPRE el Portal: recargar
+ * adentro de Concept --o mandarle el link a alguien-- te sacaba a la pantalla
+ * de iconos. Y "/guada-y-flor-re" choca con el prefijo de cualquier otro
+ * modulo que se llame parecido.
+ */
+export const BASE = "/concept";
+
 /** Convierte un nombre a un segmento de URL legible y estable. */
 export function aSlug(nombre: string): string {
   return (
@@ -37,7 +49,7 @@ export function aSlug(nombre: string): string {
 export function construirRuta(carpetas: string[], archivo?: string | null): string {
   const partes = carpetas.map(aSlug).filter(Boolean);
   if (archivo) partes.push(aSlug(archivo));
-  return "/" + partes.join("/");
+  return partes.length ? `${BASE}/${partes.join("/")}` : `${BASE}/`;
 }
 
 export interface RutaLeida {
@@ -50,7 +62,11 @@ export interface RutaLeida {
 /** Lee la ruta actual. `archivo` se decide despues, comparando contra el
  * arbol: aca solo se parte en segmentos. */
 export function leerRuta(pathname = window.location.pathname): string[] {
-  return pathname.split("/").map((s) => decodeURIComponent(s)).filter(Boolean);
+  const partes = pathname.split("/").map((s) => decodeURIComponent(s)).filter(Boolean);
+  // Se saca el prefijo si esta. Se tolera que no este para que la app siga
+  // andando servida desde la raiz de su propio dominio.
+  if (partes[0] === BASE.slice(1)) partes.shift();
+  return partes;
 }
 
 /** Cambia la URL sin recargar. `reemplazar` evita ensuciar el historial
