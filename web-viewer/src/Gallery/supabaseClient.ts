@@ -10,6 +10,13 @@
 
 import { SUPABASE_URL, SUPABASE_ANON_KEY, THUMBNAIL_SIZE } from "../config";
 import type { DriveFolderRef, DriveFile } from "./driveClient";
+import { cacheDeCarpetaVencido, TTL_CACHE_CARPETA_MS } from "./cacheFrescura";
+
+// Re-exportados para que el resto del codigo (Gallery.tsx) siga importando
+// todo lo del cache de carpetas desde este archivo; la logica en si vive en
+// `cacheFrescura.ts` porque es pura y necesita poder testearse con
+// `node --test` sin arrastrar `../config` (ver el comentario de ese archivo).
+export { cacheDeCarpetaVencido, TTL_CACHE_CARPETA_MS };
 
 const REST = `${SUPABASE_URL}/rest/v1`;
 

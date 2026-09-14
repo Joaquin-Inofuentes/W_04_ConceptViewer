@@ -7,7 +7,9 @@ import {
 } from "lucide-react";
 import { listDriveFolder, driveFileUrl, driveAuthHeaders } from "./driveClient";
 import type { DriveFolderRef, DriveListing } from "./driveClient";
-import { fetchCachedThumbnails, upsertThumbnail, fetchAllFolderCache, upsertFolderCache } from "./supabaseClient";
+import {
+  fetchCachedThumbnails, upsertThumbnail, fetchAllFolderCache, upsertFolderCache, cacheDeCarpetaVencido,
+} from "./supabaseClient";
 import type { FolderCacheRow, ThumbnailRow } from "./supabaseClient";
 import { thumbnailDeArchivo } from "./thumbnail";
 import { renderDocumentEntry, exportSectionsAsPdf, exportSectionsAsZip } from "./exportRender";
@@ -352,7 +354,15 @@ export function Gallery({ hidden, userName, onOpen, onUpload, rutaInicial, onRut
       }
       setListError(null);
       try {
-        const cached = !isRefresh ? folderTreeCacheRef.current.get(folderId) : undefined;
+        // C-15: una fila cacheada que ya paso el TTL no se usa a ciegas —
+        // se trata igual que "nunca cacheada" (rama de abajo), que pide a
+        // Drive en vivo y vuelve a guardar el listado con un `updated_at`
+        // fresco. Sin este chequeo, un archivo re-subido por Concepts con
+        // el mismo nombre (id nuevo en Drive) quedaba sirviendose con el id
+        // viejo hasta que alguien apretara "Refrescar" a mano en esa
+        // carpeta puntual — ver `cacheDeCarpetaVencido` en supabaseClient.ts.
+        const cachedRaw = !isRefresh ? folderTreeCacheRef.current.get(folderId) : undefined;
+        const cached = cachedRaw && !cacheDeCarpetaVencido(cachedRaw) ? cachedRaw : undefined;
         let listing: DriveListing;
         if (cached) {
           listing = { folders: cached.subfolders, files: cached.files };
