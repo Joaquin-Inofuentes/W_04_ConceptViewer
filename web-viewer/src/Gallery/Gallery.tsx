@@ -312,6 +312,21 @@ export function Gallery({ hidden, userName, onOpen, onUpload, rutaInicial, onRut
     }
   }, []);
 
+  /** Avisa al centinela que la galeria ya es usable: se llama una sola vez
+   * (la primera carga, no un refresh ni una navegacion posterior), un frame
+   * despues de pintar, para que el aviso llegue DESPUES del render real. */
+  const avisarArranqueRenderizado = useCallback(
+    (isRefresh: boolean) => {
+      if (isRefresh || arranqueAvisadoRef.current) return;
+      arranqueAvisadoRef.current = true;
+      requestAnimationFrame(() => {
+        fase("render");
+        onListo?.();
+      });
+    },
+    [onListo]
+  );
+
   // Carga (o refresca) el listado de una carpeta puntual: subcarpetas +
   // archivos, cruzando con el cache de Supabase para mostrar miniaturas ya
   // generadas al instante y solo procesar las que faltan. En un refresh no
@@ -426,6 +441,17 @@ export function Gallery({ hidden, userName, onOpen, onUpload, rutaInicial, onRut
 
         setItems(nextItems);
         if (!isRefresh) setListLoading(false);
+        // "listo" es la galeria PINTADA, no "las miniaturas de las 40
+        // tarjetas terminaron de generarse" (eso sigue en `pendingCount` y
+        // no bloquea el uso). Tiene que ir ACA, antes del `await runPool`
+        // de mas abajo: ese pool puede tardar bastante (una carpeta grande,
+        // sin cache, en una conexion lenta), y ponerlo despues -- como
+        // estaba antes, en el `finally` de toda la funcion -- hacia que
+        // listo() esperara a que TODAS las miniaturas terminaran de bajar y
+        // rasterizarse. Es exactamente el sintoma que esta tarea vino a
+        // curar: el aviso falso de "esta tardando" con la galeria ya
+        // usable en pantalla.
+        avisarArranqueRenderizado(isRefresh);
 
         const pending = listing.files.filter((f) => nextItems.find((it) => it.id === f.id)?.status === "queued");
         if (pending.length > 0) {
@@ -440,22 +466,15 @@ export function Gallery({ hidden, userName, onOpen, onUpload, rutaInicial, onRut
       } catch (err: any) {
         setListError(err?.message || "No se pudo cargar la carpeta de Drive");
         if (!isRefresh) setListLoading(false);
+        // La galeria con el error ya mostrado tambien es "usable" (la
+        // persona ve el mensaje y puede reintentar): listo() no espera a
+        // que la carpeta cargue bien.
+        avisarArranqueRenderizado(isRefresh);
       } finally {
         setRefreshing(false);
-        // "listo" es la galeria pintada (con datos o con el error ya
-        // mostrado), no "las miniaturas de las 40 tarjetas terminaron de
-        // generarse": eso sigue en `pendingCount` y no bloquea el uso. Se
-        // agenda un frame para avisar DESPUES de que React pinte, no antes.
-        if (!isRefresh && !arranqueAvisadoRef.current) {
-          arranqueAvisadoRef.current = true;
-          requestAnimationFrame(() => {
-            fase("render");
-            onListo?.();
-          });
-        }
       }
     },
-    [processItem, onListo]
+    [processItem, avisarArranqueRenderizado]
   );
 
   useEffect(() => {
