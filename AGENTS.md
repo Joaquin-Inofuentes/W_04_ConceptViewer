@@ -17,30 +17,36 @@ raíz del parque. Una sola copia: dos copias se separan.
 
 ## Contrato de arranque (R2-04, centinela)
 
-Fases, en orden: `bundle` (`src/App.tsx`, al evaluarse el modulo, antes del
-primer render) → `lista` (`src/Gallery/Gallery.tsx:loadFolder`, cuando
-responde `action=list` de la raiz, sea de red o del cache de Supabase) →
-`render` (mismo `loadFolder`, un frame despues de pintar la primera carpeta)
-→ `listo()` (`src/App.tsx`, via el `onListo` de `Gallery`). "Dibujo abierto"
-es una traza aparte, no un hito de arranque: `fase('dibujo:<fileId>')` en
-`openRemote` (`src/App.tsx`).
+**Fases**, en orden: `bundle` (src/App.tsx evalúa el módulo, antes del primer
+render) → `lista` (src/Gallery/Gallery.tsx:loadFolder, contesta `action=list`)
+→ `render` (un frame después de pintar la galería) → `listo()` (src/App.tsx
+via onListo de Gallery, la galería ya es usable).
 
-`listo()` es "la galeria pintada", con o sin error de listado — no espera a
-que terminen las miniaturas (eso sigue en `pendingCount`, no bloquea el uso).
+**"Listo" es**: la galería en pantalla, con o sin error de listado. No espera
+miniaturas (que siguen en `pendingCount` en segundo plano). Por qué aquí: la
+persona puede navegar carpetas enteras sin el error de "tardando más de lo
+normal" que aparecería si esperáramos todo.
 
-Códigos que emite este módulo (`src/lib/erroresDescarga.ts` mapea el error a
-uno de estos, `src/VisorConcept/App.tsx` lo reporta con `fallo()`):
-- `UNX-F7001` — la Edge Function `concepts-drive` contestó un error propio.
-  El caso real es `causa:'drive-404'`: el `fileId` ya no existe en Drive.
-- `UNX-F4005` — rango que el proxy no pudo servir (`causa:'drive-sin-rangos'`);
-  el cliente cae a la descarga completa a propósito.
-- `UNX-F4001` — el archivo hay que bajarlo entero y no entra en el
-  presupuesto del dispositivo.
-- `UNX-F4002` — encabezado/indice del zip ilegible.
-- `UNX-F4003` — cualquier otro fallo al abrir/parsear (default).
+**Presupuesto**: 30000 ms (W_13_Gateway/lib/apps.ts línea 116). Si no hay
+`listo()` ni error de arranque en ese tiempo, el centinela tira `UNX-F2001`
+arranque_colgado.
 
-`src/lib/centinela.ts` es el wrapper tipado: importar de ahí, nunca de
-`window.UnxCentinela` directo.
+**Códigos** (src/lib/erroresDescarga.ts los mapea, src/VisorConcept/App.tsx
+los reporta):
+- UNX-F7001: la Edge Function contestó error (real: drive-404, el id murió).
+- UNX-F4005: rango no honrado, cae a descarga completa.
+- UNX-F4001/F4002/F4003: archivo entero sin RAM, zip roto, otro fallo.
+
+**Recargas**: ninguna en el arranque. El módulo usa AbortSignal.timeout (8-10s
+en la galería, pedir a Drive), no UnxCentinela.recargar.
+
+**Topes**: AbortSignal.timeout en src/Gallery/driveClient.ts:listDriveFolder
+(8 s, 3 reintentos) y supabaseClient.ts:pedir (10 s, sin reintento).
+
+**Cómo se prueba**: `node _Otros_ArnesParque/arnes.mjs --modulo concept --modo frio`.
+
+**PWA**: no, no tiene service worker propio (inyecta centinela pero no es su
+SW). El del gateway (scope "/") se entera del cambio vía contenido.
 
 ## `concepts-drive`: el contrato de error (R3-01)
 
