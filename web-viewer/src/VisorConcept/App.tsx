@@ -17,7 +17,7 @@ import {
 import { alternarTema, temaGuardado } from '../theme';
 import type { Tema } from '../theme';
 import { fallo } from '../lib/centinela';
-import { codigoDeErrorDescarga, parseRangoFallido } from '../lib/erroresDescarga';
+import { codigoDeErrorDescarga, detalleProxy, parseRangoFallido } from '../lib/erroresDescarga';
 import './App.css';
 
 interface ViewerProps {
@@ -579,18 +579,25 @@ export function ConceptViewer({ source, onClose }: ViewerProps) {
     let urlPlaceholder: string | null = null;
 
     // Reporta al centinela un fallo al abrir/leer el .concepts, con el
-    // codigo del catalogo que corresponda (F4005 para el 502 conocido de
-    // concepts-drive por rango; el arreglo de fondo es R3-01, aca solo hay
-    // que reportarlo y mostrar el estado honesto). `fileId` solo si el
-    // origen es remoto: un archivo local no tiene nada que ver con el proxy.
+    // codigo del catalogo que corresponda. Desde R3-01 el codigo lo pone la
+    // propia Edge Function (UNX-F4005 para un rango, UNX-F7001 para el resto
+    // de sus fallos) y viene con `causa` y el `id` de su linea en los logs de
+    // Supabase: sin ese id, una fila de `unx_fallos` y el log del backend no
+    // se pueden cruzar. `fileId` solo si el origen es remoto: un archivo
+    // local no tiene nada que ver con el proxy.
     const reportarFalloDescarga = (err: unknown) => {
       const codigo = codigoDeErrorDescarga(err);
       setErrorCodigo(codigo);
       const mensaje = err instanceof Error ? err.message : String(err);
-      const detalleRango = parseRangoFallido(mensaje);
+      const delProxy = detalleProxy(err);
+      const detalleRango = delProxy
+        ? { range: delProxy.range, status: delProxy.status }
+        : parseRangoFallido(mensaje);
       fallo(codigo, {
         fileId: source.kind === 'remote' ? source.fileId : undefined,
         ...(detalleRango || {}),
+        ...(delProxy?.causa ? { causa: delProxy.causa } : {}),
+        ...(delProxy?.idFallo ? { idFallo: delProxy.idFallo } : {}),
       });
     };
 

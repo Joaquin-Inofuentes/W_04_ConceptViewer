@@ -42,6 +42,101 @@ export class ArchivoDemasiadoGrandeError extends Error {
   }
 }
 
+/**
+ * Un pedido al proxy `concepts-drive` que volvio con el cuerpo de error del
+ * contrato de R3-01 (`{codigo, causa, detalle, id}`).
+ *
+ * Antes todo fallo del proxy llegaba aca como `Rango bytes=-131072 fallo
+ * (502)` y nada mas: no habia forma de distinguir "el dibujo ya no existe en
+ * Drive" (que no se arregla reintentando) de "Drive se cayo un segundo" (que
+ * si). Se reintentaba tres veces, con 1,6 s de espera, para terminar en el
+ * mismo error — y el mensaje que veia la persona no decia que hacer.
+ */
+export class ErrorProxyConcepts extends Error {
+  readonly status: number;
+  readonly range: string | null;
+  /** Codigo del catalogo que puso la funcion, si lo puso. */
+  readonly codigo: string | null;
+  /** Etiqueta corta y estable: drive-404, drive-sin-rangos, timeout, ... */
+  readonly causa: string | null;
+  /** Id del fallo en los logs de Supabase: es lo que hay que mandar para que
+   * alguien pueda encontrar la linea. */
+  readonly idFallo: string | null;
+
+  constructor(
+    mensaje: string,
+    datos: { status: number; range: string | null; codigo?: string | null; causa?: string | null; idFallo?: string | null }
+  ) {
+    super(mensaje);
+    this.name = "ErrorProxyConcepts";
+    this.status = datos.status;
+    this.range = datos.range;
+    this.codigo = datos.codigo ?? null;
+    this.causa = datos.causa ?? null;
+    this.idFallo = datos.idFallo ?? null;
+  }
+
+  /** Reintentar no lo va a arreglar: el archivo no esta, el pedido era
+   * invalido, o el servidor ya dijo que no sabe servir rangos. */
+  get esDefinitivo(): boolean {
+    if (this.causa === "drive-404" || this.causa === "pedido-invalido" || this.causa === "drive-sin-rangos") {
+      return true;
+    }
+    // Sin causa (una respuesta vieja o de otro intermediario): cualquier 4xx
+    // que no sea "vuelve a intentar" tampoco mejora repitiendo.
+    return this.status >= 400 && this.status < 500 && this.status !== 408 && this.status !== 429;
+  }
+
+  /** El servidor no pudo servir el rango: hay que bajar el archivo entero. */
+  get pideDescargaCompleta(): boolean {
+    return this.causa === "drive-sin-rangos" || this.status === 416;
+  }
+}
+
+/** Mensaje honesto y accionable para cada causa del proxy. El texto se muestra
+ * tal cual en la pantalla de error del visor, asi que dice QUE PASO y QUE
+ * HACER, sin nombrar rutas ni versiones. */
+function mensajeDeCausa(causa: string | null, range: string, status: number): string {
+  switch (causa) {
+    case "drive-404":
+      return "Este dibujo ya no está en Drive con ese identificador: lo más probable es que se haya vuelto a subir desde Concepts. Actualizá la lista de la carpeta y abrilo de nuevo.";
+    case "drive-sin-rangos":
+      return `El servidor no pudo mandar solo la parte que hacía falta (${range}): hay que bajar el dibujo entero.`;
+    case "timeout":
+      return "Drive tardó demasiado en contestar. Probá de nuevo en un momento.";
+    case "pedido-invalido":
+      return "El pedido no era válido. Volvé a la lista y abrí el dibujo otra vez.";
+    default:
+      return `Rango ${range} fallo (${status})`;
+  }
+}
+
+/** Lee el cuerpo de error del proxy. Si no viene JSON (un 502 del gateway, la
+ * pagina de login), devuelve lo minimo para no perder el status. */
+async function errorDelProxy(res: Response, range: string): Promise<ErrorProxyConcepts> {
+  let codigo: string | null = null;
+  let causa: string | null = null;
+  let idFallo: string | null = null;
+  let detalle: string | null = null;
+  try {
+    const cuerpo = await res.json();
+    if (cuerpo && typeof cuerpo === "object") {
+      codigo = typeof cuerpo.codigo === "string" ? cuerpo.codigo : null;
+      causa = typeof cuerpo.causa === "string" ? cuerpo.causa : null;
+      idFallo = typeof cuerpo.id === "string" ? cuerpo.id : null;
+      detalle = typeof cuerpo.detalle === "string" ? cuerpo.detalle : null;
+    }
+  } catch {
+    // El cuerpo no era JSON: nos quedamos con el status, que ya dice algo.
+  }
+  // El formato viejo (`Rango <x> fallo (<n>)`) se mantiene como fallback
+  // porque `lib/erroresDescarga.ts` lo parsea para separar rango y status.
+  let mensaje = mensajeDeCausa(causa, range, res.status);
+  if (idFallo) mensaje += ` (referencia ${idFallo})`;
+  if (!causa && detalle) mensaje += ` — ${detalle}`;
+  return new ErrorProxyConcepts(mensaje, { status: res.status, range, codigo, causa, idFallo });
+}
+
 const SIG_EOCD = 0x06054b50;
 const SIG_EOCD64 = 0x06064b50;
 const SIG_EOCD64_LOC = 0x07064b50;
@@ -167,11 +262,88 @@ export class RemoteSource implements ZipSource {
    * cada ida y vuelta a Drive via el proxy cuesta ~1,7 s, asi que ahorrar
    * requests importa mas que ahorrar bytes. */
   async leerCola(n: number): Promise<{ bytes: Uint8Array; offset: number }> {
-    const res = await this.fetchRaw(`bytes=-${n}`, `-${n}`);
+    let res: { bytes: Uint8Array; total: number | null; status: number };
+    try {
+      res = await this.fetchRaw(`bytes=-${n}`, `-${n}`);
+    } catch (e) {
+      // El servidor dijo explicitamente que no puede servir ese rango (416 +
+      // causa drive-sin-rangos). Bajar el archivo entero es lo unico que
+      // queda, y se hace A PROPOSITO — con progreso y con el techo de RAM del
+      // dispositivo — en vez de dejar el dibujo sin abrir.
+      if (e instanceof ErrorProxyConcepts && e.pideDescargaCompleta) {
+        await this.bajarEntero();
+        const desde = Math.max(0, this.size - n);
+        return { bytes: await this.read(desde, this.size - desde), offset: desde };
+      }
+      throw e;
+    }
     this.size = res.total ?? res.bytes.length;
     const offset = Math.max(0, this.size - res.bytes.length);
     this.bloques.push({ start: offset, end: offset + res.bytes.length - 1, bytes: res.bytes });
     return { bytes: res.bytes, offset };
+  }
+
+  /** ¿Ya se bajo el archivo entero por no haber rangos? Evita volver a bajarlo
+   * cuando el siguiente rango tambien falle. */
+  private enteroEnMemoria = false;
+
+  /**
+   * Descarga el archivo COMPLETO (sin Range) y lo deja como un solo bloque en
+   * el cache, para que el resto del lector siga funcionando igual.
+   *
+   * Es el camino de respaldo de `UNX-F4005`: si el proxy no puede servir
+   * rangos, el dibujo igual se abre, solo que tarda mas. `onBytes` sigue
+   * llamandose con cada chunk, asi que la barra de progreso del visor se
+   * mueve en vez de quedarse muda medio minuto.
+   */
+  private async bajarEntero(): Promise<void> {
+    // El bloque tiene que seguir estando: si alguien lo libero, hay que
+    // bajarlo de nuevo (pedir rangos no es una opcion en este camino).
+    if (this.enteroEnMemoria && this.bloques.length > 0) return;
+    const sep = this.url.includes("?") ? "&" : "?";
+    const u = this.urlResuelta ? `${this.url}${sep}u=${encodeURIComponent(this.urlResuelta)}` : this.url;
+    // Un archivo entero puede ser de cientos de MB por una conexion movil: el
+    // tope es mucho mas generoso que el de un rango, pero existe igual (regla
+    // dura del parque: ningun await de arranque sin tope). 120 s + 1 s/MB del
+    // techo del dispositivo.
+    const topeMs = 120_000 + (techoMaterializable() / (1024 * 1024)) * 1000;
+    const timeoutSignal = AbortSignal.timeout(topeMs);
+    const signal = this.signal ? AbortSignal.any([this.signal, timeoutSignal]) : timeoutSignal;
+    const res = await fetch(u, { headers: this.headers, signal });
+    if (!res.ok) throw await errorDelProxy(res, "(archivo entero)");
+
+    const declarado = Number(res.headers.get("x-drive-total") || res.headers.get("content-length") || "0");
+    const techo = techoMaterializable();
+    if (declarado > techo) {
+      await res.body?.cancel();
+      throw new ArchivoDemasiadoGrandeError(declarado, techo);
+    }
+
+    const partes: Uint8Array[] = [];
+    let total = 0;
+    const reader = res.body!.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      partes.push(value);
+      total += value.length;
+      this.onBytes?.(value.length);
+      // El techo se comprueba TAMBIEN mientras llega: un servidor que no
+      // declara Content-Length podria pasarse igual.
+      if (total > techo) {
+        await reader.cancel();
+        throw new ArchivoDemasiadoGrandeError(total, techo);
+      }
+    }
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+    for (const p of partes) {
+      bytes.set(p, offset);
+      offset += p.length;
+    }
+    this.size = total;
+    this.bloques = [{ start: 0, end: total - 1, bytes }];
+    this.enteroEnMemoria = true;
   }
 
   /**
@@ -196,6 +368,10 @@ export class RemoteSource implements ZipSource {
         return await this.fetchRawUnaVez(rangeHeader, rangeParam);
       } catch (e) {
         ultimoError = e;
+        // Reintentar lo que el proxy YA dijo que no tiene arreglo (el archivo
+        // no esta en Drive, el pedido era invalido, no hay rangos) son 1,6 s
+        // de espera para llegar al mismo error: se corta en el primero.
+        if (e instanceof ErrorProxyConcepts && e.esDefinitivo) throw e;
         // La URL resuelta pudo vencer: se descarta para que el proxy la
         // vuelva a resolver en el proximo intento.
         this.urlResuelta = null;
@@ -229,7 +405,7 @@ export class RemoteSource implements ZipSource {
       headers: { ...this.headers, Range: rangeHeader },
       signal,
     });
-    if (!res.ok) throw new Error(`Rango ${rangeHeader} fallo (${res.status})`);
+    if (!res.ok) throw await errorDelProxy(res, rangeHeader);
 
     const resuelta = res.headers.get("x-drive-url");
     if (resuelta) this.urlResuelta = resuelta;
@@ -252,7 +428,21 @@ export class RemoteSource implements ZipSource {
     start: number,
     end: number
   ): Promise<{ bytes: Uint8Array; total: number | null }> {
-    const res = await this.fetchRaw(`bytes=${start}-${end}`, `${start}-${end}`);
+    let res: { bytes: Uint8Array; total: number | null; status: number };
+    try {
+      res = await this.fetchRaw(`bytes=${start}-${end}`, `${start}-${end}`);
+    } catch (e) {
+      // Mismo respaldo que en `leerCola`: el proxy avisa que no hay rangos y
+      // el archivo se baja entero (una sola vez), de donde salen este pedido y
+      // todos los siguientes.
+      if (e instanceof ErrorProxyConcepts && e.pideDescargaCompleta) {
+        await this.bajarEntero();
+        const bloque = this.bloques[0];
+        const fin = Math.min(end, this.size - 1);
+        return { bytes: bloque.bytes.subarray(start, fin + 1), total: this.size };
+      }
+      throw e;
+    }
     // Si el servidor IGNORO el Range y mando el archivo entero, el status es
     // 200 y no 206. Se detecta para no interpretar mal los offsets.
     if (res.status !== 206 && res.bytes.length > end - start + 1) {
@@ -322,6 +512,11 @@ export class RemoteSource implements ZipSource {
    * agrupado un solo bloque puede pesar 3 MB, y ocho de esos son 24 MB — una
    * porcion nada despreciable del presupuesto de un telefono de 1 GB. */
   private podarBloques() {
+    // Cuando se bajo el archivo entero (porque el servidor no sirve rangos),
+    // ese bloque NO se poda: volver a pedirlo seria volver a fallar. Ya paso
+    // por el techo del dispositivo antes de entrar, asi que no es el bloque
+    // gigante e inesperado que este podado vino a desalojar.
+    if (this.enteroEnMemoria) return;
     let total = this.bloques.reduce((n, b) => n + b.bytes.length, 0);
     // Antes se dejaba `length > 1` para no podar el unico bloque (haria que
     // la lectura en curso se quedara sin sus propios bytes). Pero eso
@@ -337,8 +532,12 @@ export class RemoteSource implements ZipSource {
     }
   }
 
-  /** Descarta los bloques cacheados (el indice ya esta parseado en entries). */
+  /** Descarta los bloques cacheados (el indice ya esta parseado en entries).
+   * Excepto cuando el archivo entero esta en memoria porque el servidor no
+   * sirve rangos: ahi es la unica copia que hay, y tirarla obligaria a
+   * bajarlo otra vez para cada recurso. */
   liberar() {
+    if (this.enteroEnMemoria) return;
     this.bloques = [];
   }
 }

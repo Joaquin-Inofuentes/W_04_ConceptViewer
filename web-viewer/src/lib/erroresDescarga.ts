@@ -23,20 +23,51 @@ export function parseRangoFallido(mensaje: string): DetalleRangoFallido | null {
   return { range: m[1], status: Number(m[2]) };
 }
 
+/** El cuerpo de error que devuelve `concepts-drive` desde R3-01. `zip.ts` lo
+ * adjunta al Error (clase `ErrorProxyConcepts`); aca se lee de forma
+ * estructural para no acoplar este modulo puro con el del zip. */
+export interface DetalleProxy {
+  status: number;
+  range: string | null;
+  codigo: string | null;
+  causa: string | null;
+  idFallo: string | null;
+}
+
+/** Si el error viene del proxy con el contrato de R3-01, devuelve sus campos.
+ * `null` si es cualquier otro error. */
+export function detalleProxy(err: unknown): DetalleProxy | null {
+  if (!err || typeof err !== "object") return null;
+  const e = err as Record<string, unknown>;
+  if (e.name !== "ErrorProxyConcepts" || typeof e.status !== "number") return null;
+  return {
+    status: e.status,
+    range: typeof e.range === "string" ? e.range : null,
+    codigo: typeof e.codigo === "string" ? e.codigo : null,
+    causa: typeof e.causa === "string" ? e.causa : null,
+    idFallo: typeof e.idFallo === "string" ? e.idFallo : null,
+  };
+}
+
 /**
  * Codigo del catalogo que corresponde a un error de `openConceptsRemote` /
  * `parseConceptsRemote` (ver `VisorConcept/parser.ts` y `zip.ts`).
  *
- * UNX-F4005 es el 502 conocido de la Edge Function `concepts-drive` (R3-01
- * lo arregla; esta tarea solo tiene que reportarlo y no colgarse). Los otros
- * dos cubren el resto de lo que ya distingue `zip.ts` por su propio mensaje:
- * archivo demasiado grande para materializar entero (F4001, "descarga
- * incompleta/invalida" en el sentido del catalogo: hubo que bajarlo entero y
- * no entro en el presupuesto) y un indice/encabezado que no se pudo leer
+ * Desde R3-01 la Edge Function manda su propio `codigo` en el cuerpo del
+ * error, y ese manda: es la funcion la que sabe si fue un rango (UNX-F4005)
+ * o cualquier otro fallo suyo (UNX-F7001, "la Edge Function contesto un
+ * error" — el caso real es un fileId que ya no existe en Drive).
+ *
+ * Sin ese cuerpo se sigue deduciendo del mensaje, como antes: UNX-F4005 para
+ * un rango fallido; archivo demasiado grande para materializar entero (F4001,
+ * "descarga incompleta/invalida" en el sentido del catalogo: hubo que bajarlo
+ * entero y no entro en el presupuesto); indice/encabezado que no se pudo leer
  * (F4002). Cualquier otra cosa (el parser de tree.pack, un msgpack corrupto)
  * cae en F4003.
  */
 export function codigoDeErrorDescarga(err: unknown): string {
+  const delProxy = detalleProxy(err);
+  if (delProxy?.codigo) return delProxy.codigo;
   const mensaje = err instanceof Error ? err.message : String(err);
   if (parseRangoFallido(mensaje)) return "UNX-F4005";
   if (/da[ñn]ado, incompleto, o el servidor no soporta descarga parcial/i.test(mensaje)) {

@@ -30,8 +30,10 @@ que terminen las miniaturas (eso sigue en `pendingCount`, no bloquea el uso).
 
 Códigos que emite este módulo (`src/lib/erroresDescarga.ts` mapea el error a
 uno de estos, `src/VisorConcept/App.tsx` lo reporta con `fallo()`):
-- `UNX-F4005` — rango a `concepts-drive` que fallo (el 502 conocido; R3-01 lo
-  arregla, esto solo evita que el visor se cuelgue).
+- `UNX-F7001` — la Edge Function `concepts-drive` contestó un error propio.
+  El caso real es `causa:'drive-404'`: el `fileId` ya no existe en Drive.
+- `UNX-F4005` — rango que el proxy no pudo servir (`causa:'drive-sin-rangos'`);
+  el cliente cae a la descarga completa a propósito.
 - `UNX-F4001` — el archivo hay que bajarlo entero y no entra en el
   presupuesto del dispositivo.
 - `UNX-F4002` — encabezado/indice del zip ilegible.
@@ -39,3 +41,27 @@ uno de estos, `src/VisorConcept/App.tsx` lo reporta con `fallo()`):
 
 `src/lib/centinela.ts` es el wrapper tipado: importar de ahí, nunca de
 `window.UnxCentinela` directo.
+
+## `concepts-drive`: el contrato de error (R3-01)
+
+La Edge Function vive en `web-viewer/supabase/functions/concepts-drive/`
+(`index.ts` + `errores.ts` + `rangos.ts`) y **no se autodespliega**: después de
+editarla hay que redesplegar los TRES archivos con `deploy_edge_function`
+(proyecto `kuhcxzusnrttkywgalgk`, `verify_jwt: true`, entrypoint
+`concepts-drive/index.ts`). Tests: `deno test` en esa carpeta.
+
+Todo fallo sale con `{ok:false, codigo, causa, detalle, upstreamStatus,
+fileId, range, id}` y el MISMO objeto va a `console.error`: el `id` es lo
+único que cruza lo que vio la persona con la línea del log de Supabase. El
+status dice de quién fue: **400** pedido inválido, **404** el archivo no está
+en Drive, **416** el rango no se puede servir, **502** el upstream.
+
+Causas: `pedido-invalido`, `drive-404`, `drive-sin-rangos`, `drive-html`,
+`timeout`, `upstream`, `interno`.
+
+**Antes de sospechar de los rangos**: Drive honra los sufijos (`bytes=-N`),
+medido el 13/09/2026 en la URL directa y en la confirmada del interstitial.
+El 502 que se atribuía a los rangos era un **404 de Drive**: Concepts re-sube
+el dibujo, Drive le da un id NUEVO, y el id viejo queda muerto en
+`drive_folder_cache` (que la galería sirve sin vencimiento). El síntoma se ve
+hoy como `UNX-F7001` + `causa:'drive-404'` y se cura refrescando la carpeta.

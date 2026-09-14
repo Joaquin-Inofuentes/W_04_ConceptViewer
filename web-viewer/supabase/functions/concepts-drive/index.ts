@@ -11,11 +11,35 @@
 // GET ?action=list&folderId=...     -> { ok, folders: [{id,name}], files: [{id,name,modifiedAt,hasTime}] }
 //   files viene ordenado del mas reciente al mas viejo (por modifiedAt).
 // GET ?action=download&fileId=...   -> bytes crudos del archivo (application/octet-stream)
+//   Acepta Range (header o ?range=a-b) y devuelve 206 + Content-Range.
+//   Devuelve X-Drive-Url con la URL ya resuelta; el cliente la reenvia en ?u=
+//   para que los rangos siguientes no re-resuelvan el interstitial de virus.
+//
+// TODO fallo sale con el contrato de `errores.ts`: status que dice de quien
+// fue la culpa, `codigo` del catalogo del parque, `causa` corta, `detalle` y
+// un `id` que tambien se escribe con console.error. Ver ese archivo.
 //
 // Desplegado en Supabase (proyecto kuhcxzusnrttkywgalgk) via el MCP de
 // Supabase; este archivo es la copia versionada en git, no se autodespliega
 // desde aca — si se edita hay que redesplegar manualmente con
-// deploy_edge_function o el Supabase CLI.
+// deploy_edge_function o el Supabase CLI. Se redespliega junto con
+// `errores.ts` y `rangos.ts`, que son parte de la misma funcion.
+
+import {
+  CODIGO_RANGO,
+  ErrorProxy,
+  comoErrorProxy,
+  cuerpoDeError,
+  nuevoIdFallo,
+} from "./errores.ts";
+import {
+  RangoInvalido,
+  aAbsoluto,
+  formatearRango,
+  parsearRango,
+  totalDeContentRange,
+  type RangoPedido,
+} from "./rangos.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -26,6 +50,8 @@ const CORS = {
   // zip por rangos no puede saber el tamaño real del archivo.
   "Access-Control-Expose-Headers": "content-range, content-length, accept-ranges, x-drive-total, x-drive-url",
 };
+
+const JSON_CORS = { ...CORS, "Content-Type": "application/json" };
 
 // Hosts a los que este proxy acepta reenviar una URL ya resuelta (parametro
 // `u`). Sin esta lista blanca seria un proxy abierto: cualquiera podria pedir
@@ -50,7 +76,7 @@ const ID_DRIVE_VALIDO = /^[A-Za-z0-9_-]{10,80}$/;
 
 function validarIdDrive(id: string, etiqueta: string): void {
   if (!ID_DRIVE_VALIDO.test(id)) {
-    throw new Error(`${etiqueta} invalido`);
+    throw new ErrorProxy(400, "pedido-invalido", { detalle: `${etiqueta} invalido` });
   }
 }
 
@@ -100,7 +126,13 @@ async function listarCarpetaPublica(folderId: string): Promise<EntradaDrive[]> {
     headers: { "User-Agent": "Mozilla/5.0" },
     signal: AbortSignal.timeout(15000),
   });
-  if (!r.ok) throw new Error(`Drive folder ${r.status}`);
+  if (!r.ok) {
+    await r.body?.cancel();
+    throw new ErrorProxy(r.status === 404 ? 404 : 502, r.status === 404 ? "drive-404" : "upstream", {
+      upstreamStatus: r.status,
+      detalle: `Drive folder ${r.status}`,
+    });
+  }
   return parsearCarpeta(await r.text());
 }
 
@@ -210,6 +242,11 @@ function urlDesdeInterstitial(html: string): string | null {
   return `${action}?${params.toString()}`;
 }
 
+function tituloDeHtml(html: string): string {
+  const m = /<title>([^<]*)<\/title>/.exec(html);
+  return m ? m[1].trim().slice(0, 80) : "(sin title)";
+}
+
 // Cache en memoria de la URL "confirmada" (drive.usercontent.google.com) de
 // los archivos que pasan por el interstitial. Sin esto, CADA pedido de rango
 // tendria que volver a bajar y parsear el HTML de confirmacion — y un archivo
@@ -217,6 +254,24 @@ function urlDesdeInterstitial(html: string): string | null {
 // asi que se guarda por poco tiempo y se reintenta si deja de servir.
 const urlConfirmadaCache = new Map<string, { url: string; expira: number }>();
 const TTL_URL_CONFIRMADA = 5 * 60 * 1000;
+
+// Mismo TTL, misma idea: el tamaño total de cada archivo, que es lo que
+// permite convertir un rango sufijo a uno absoluto SIN gastar una ida y
+// vuelta extra para averiguarlo. Corto a proposito: si Concepts sobreescribe
+// el dibujo conservando el id, el total viejo apuntaria al lugar equivocado
+// (y aun asi se detecta abajo, comparando contra el Content-Range que vuelve).
+const totalesCache = new Map<string, { total: number; expira: number }>();
+
+function totalCacheado(fileId: string): number | null {
+  const hit = totalesCache.get(fileId);
+  if (hit && hit.expira > Date.now()) return hit.total;
+  return null;
+}
+
+function recordarTotal(fileId: string, total: number | null): void {
+  if (total === null) return;
+  totalesCache.set(fileId, { total, expira: Date.now() + TTL_URL_CONFIRMADA });
+}
 
 async function resolverUrlDescarga(fileId: string, forzarRefresco = false): Promise<string> {
   const ahora = Date.now();
@@ -233,8 +288,34 @@ async function resolverUrlDescarga(fileId: string, forzarRefresco = false): Prom
     headers: { ...headers, Range: "bytes=0-0" },
     signal: AbortSignal.timeout(30000),
   });
+
+  // El caso que se comio tres dias de sospechar de los rangos: Drive contesta
+  // 404 (HTML) porque ese fileId YA NO EXISTE — Concepts re-sube el dibujo y
+  // Drive le da un id NUEVO, asi que el id viejo que quedo guardado en
+  // `drive_folder_cache` apunta a la nada. Antes ese 404 caia en el parseo
+  // del interstitial, no encontraba formulario, y salia como
+  // "Drive devolvio HTML sin formulario de confirmacion" + 502: un mensaje
+  // que apunta al escaneo de virus y no tiene nada que ver.
+  if (sonda.status === 404) {
+    await sonda.body?.cancel();
+    throw new ErrorProxy(404, "drive-404", {
+      upstreamStatus: 404,
+      detalle:
+        "Drive no tiene ese archivo (404). Casi siempre es un id vencido: " +
+        "Concepts re-subio el dibujo y Drive le dio uno nuevo. Hay que refrescar el listado de la carpeta.",
+    });
+  }
+
   const ct = sonda.headers.get("content-type") || "";
   if (!ct.includes("text/html")) {
+    if (!sonda.ok) {
+      await sonda.body?.cancel();
+      throw new ErrorProxy(502, "upstream", {
+        upstreamStatus: sonda.status,
+        detalle: `Drive contesto ${sonda.status} al resolver la URL de descarga`,
+      });
+    }
+    recordarTotal(fileId, totalDeContentRange(sonda.headers.get("content-range")));
     await sonda.body?.cancel();
     urlConfirmadaCache.set(fileId, { url: directa, expira: ahora + TTL_URL_CONFIRMADA });
     return directa;
@@ -242,67 +323,216 @@ async function resolverUrlDescarga(fileId: string, forzarRefresco = false): Prom
 
   const html = await sonda.text();
   const confirmUrl = urlDesdeInterstitial(html);
-  if (!confirmUrl) throw new Error("Drive devolvio HTML sin formulario de confirmacion");
+  if (!confirmUrl) {
+    throw new ErrorProxy(502, "drive-html", {
+      upstreamStatus: sonda.status,
+      detalle: `Drive devolvio HTML sin formulario de confirmacion (status ${sonda.status}, titulo "${tituloDeHtml(html)}")`,
+    });
+  }
   urlConfirmadaCache.set(fileId, { url: confirmUrl, expira: ahora + TTL_URL_CONFIRMADA });
   return confirmUrl;
 }
 
-/**
- * Descarga (completa o por rango) desde Drive. Verificado empiricamente:
- * Drive honra `Range` tanto en la URL directa como en la confirmada del
- * interstitial, devolviendo 206 + Content-Range correcto — incluso en el
- * archivo de 262 MB. Eso es lo que permite abrir un dibujo bajando el 4% de
- * sus bytes en vez de los 262 MB enteros.
- */
-async function descargarDeDrive(
+function esHtml(res: Response): boolean {
+  return (res.headers.get("content-type") || "").includes("text/html");
+}
+
+async function pedirAUrl(url: string, rango: RangoPedido | null): Promise<{ res: Response; url: string }> {
+  const headers: Record<string, string> = { "User-Agent": "Mozilla/5.0" };
+  if (rango) headers.Range = formatearRango(rango);
+  return { res: await fetch(url, { headers, signal: AbortSignal.timeout(120000) }), url };
+}
+
+/** Pide el rango resolviendo la URL, y si la respuesta huele a URL vencida
+ * (4xx o HTML) re-resuelve el interstitial UNA vez. */
+async function pedirResolviendo(
   fileId: string,
-  range: string | null,
+  rango: RangoPedido | null,
   urlPrevia: string | null
 ): Promise<{ res: Response; url: string }> {
-  const base = { "User-Agent": "Mozilla/5.0" };
-  const headers: Record<string, string> = range ? { ...base, Range: range } : base;
-
-  const pedir = async (url: string) => ({
-    res: await fetch(url, { headers, signal: AbortSignal.timeout(120000) }),
-    url,
-  });
-
   // Camino rapido: el cliente ya sabe la URL directa (se la dimos en un
   // rango anterior), asi que nos ahorramos re-resolver el interstitial —
   // una ida y vuelta extra a Drive por CADA rango pedido.
   let intento = urlPrevia
-    ? await pedir(urlPrevia)
-    : await pedir(await resolverUrlDescarga(fileId, false));
+    ? await pedirAUrl(urlPrevia, rango)
+    : await pedirAUrl(await resolverUrlDescarga(fileId, false), rango);
 
-  // Si vencio (Drive devuelve HTML o 4xx), se re-resuelve una vez.
-  if (!intento.res.ok || (intento.res.headers.get("content-type") || "").includes("text/html")) {
+  // Si vencio (Drive devuelve HTML o 4xx), se re-resuelve una vez. Si el
+  // archivo ya no existe, `resolverUrlDescarga` tira drive-404 y ese es el
+  // error honesto que sale, en vez de un 502 generico.
+  if (!intento.res.ok || esHtml(intento.res)) {
     await intento.res.body?.cancel();
-    intento = await pedir(await resolverUrlDescarga(fileId, true));
+    intento = await pedirAUrl(await resolverUrlDescarga(fileId, true), rango);
   }
-  if (!intento.res.ok) throw new Error(`Drive download ${intento.res.status}`);
-  if ((intento.res.headers.get("content-type") || "").includes("text/html")) {
-    throw new Error("Drive sigue devolviendo HTML despues de confirmar");
-  }
-  if (!intento.res.body) throw new Error("Drive no devolvio contenido");
   return intento;
+}
+
+/** Un `bytes=0-0` solo para leer el total del Content-Range. Es la ida y
+ * vuelta extra que el camino normal EVITA: solo se paga cuando el upstream
+ * no supo servir un rango sufijo. */
+async function averiguarTotal(fileId: string, url: string): Promise<number | null> {
+  const { res } = await pedirAUrl(url, { tipo: "absoluto", desde: 0, hasta: 0 });
+  const total = totalDeContentRange(res.headers.get("content-range"));
+  await res.body?.cancel();
+  if (total === null) return null;
+  recordarTotal(fileId, total);
+  return total;
+}
+
+// Cuando Drive no honra el Range y manda el archivo entero, a partir de este
+// tamaño el detalle del error avisa del egress: encontrado auditando el 14/8/
+// 2026, un solo archivo de 275 MB se pidio asi 3.554 veces en 24 horas
+// (7,7 GB, mas de una cuota mensual entera del plan Free) pese a tener su
+// miniatura ya cacheada en `concept_thumbnails`. Desde R3-01 ese caso se
+// corta SIEMPRE con 416 (no solo por encima del techo): devolver el archivo
+// entero como respuesta a un rango corre todos los offsets del lector de zip.
+const TECHO_RANGE_NO_HONRADO = 8 * 1024 * 1024;
+
+export interface ResultadoDescarga {
+  res: Response;
+  url: string;
+  /** Total del archivo, si se pudo saber. */
+  total: number | null;
+  /** El rango que efectivamente se le mando a Drive. */
+  enviado: RangoPedido | null;
+}
+
+/**
+ * Descarga (completa o por rango) desde Drive.
+ *
+ * Los rangos SUFIJO (`bytes=-N`, los ultimos N bytes: el indice del zip) se
+ * convierten a absolutos en cuanto se conoce el total del archivo — ver
+ * `rangos.ts` para el por que. La primera vez el total no se conoce y se manda
+ * el sufijo tal cual (medido: Drive lo honra, y asi se aprende el total de su
+ * Content-Range sin gastar un viaje extra); a partir de ahi, y durante el TTL,
+ * los rangos salen absolutos.
+ */
+async function descargarDeDrive(
+  fileId: string,
+  rango: RangoPedido | null,
+  urlPrevia: string | null
+): Promise<ResultadoDescarga> {
+  let total = totalCacheado(fileId);
+  let enviado = rango ? aAbsoluto(rango, total) : null;
+  let intento = await pedirResolviendo(fileId, enviado, urlPrevia);
+
+  if (!intento.res.ok) {
+    const status = intento.res.status;
+    await intento.res.body?.cancel();
+    if (status === 416) {
+      throw new ErrorProxy(416, "drive-sin-rangos", {
+        codigo: CODIGO_RANGO,
+        upstreamStatus: 416,
+        detalle: `Drive no puede servir ${enviado ? formatearRango(enviado) : "(sin rango)"} (416)`,
+      });
+    }
+    throw new ErrorProxy(status === 404 ? 404 : 502, status === 404 ? "drive-404" : "upstream", {
+      upstreamStatus: status,
+      detalle: `Drive download ${status}`,
+    });
+  }
+  if (esHtml(intento.res)) {
+    await intento.res.body?.cancel();
+    throw new ErrorProxy(502, "drive-html", {
+      upstreamStatus: intento.res.status,
+      detalle: "Drive sigue devolviendo HTML despues de confirmar",
+    });
+  }
+
+  if (rango) {
+    // El total que declara la respuesta manda sobre el cacheado: si el archivo
+    // cambio de tamaño conservando el id, el rango absoluto que calculamos
+    // apunta al lugar equivocado, y eso se ve ACA (no en el cliente, que ya no
+    // tendria como darse cuenta).
+    const declarado = totalDeContentRange(intento.res.headers.get("content-range"));
+    if (declarado !== null && total !== null && declarado !== total && rango.tipo === "sufijo") {
+      await intento.res.body?.cancel();
+      total = declarado;
+      recordarTotal(fileId, total);
+      enviado = aAbsoluto(rango, total);
+      intento = await pedirResolviendo(fileId, enviado, intento.url);
+    }
+
+    // Drive ignoro el Range: contesto 200 con el archivo entero. Si el rango
+    // era un sufijo, todavia queda una carta: averiguar el total y repetir en
+    // absoluto, que es la forma que cualquier servidor sabe servir.
+    if (intento.res.status !== 206 && enviado?.tipo === "sufijo") {
+      await intento.res.body?.cancel();
+      total = await averiguarTotal(fileId, intento.url);
+      const absoluto = aAbsoluto(rango, total);
+      if (absoluto.tipo === "absoluto") {
+        enviado = absoluto;
+        intento = await pedirResolviendo(fileId, enviado, intento.url);
+      }
+    }
+
+    if (intento.res.status !== 206) {
+      const largo = Number(intento.res.headers.get("content-length") || "0");
+      await intento.res.body?.cancel();
+      const aviso =
+        largo > TECHO_RANGE_NO_HONRADO
+          ? ` Son ${(largo / 1e6).toFixed(1)} MB para un pedido de unos pocos bytes: si lo que hace falta es una vista previa, usar la miniatura ya cacheada en concept_thumbnails.`
+          : "";
+      throw new ErrorProxy(416, "drive-sin-rangos", {
+        codigo: CODIGO_RANGO,
+        upstreamStatus: intento.res.status,
+        detalle:
+          `Se pidio ${formatearRango(rango)}${enviado && formatearRango(enviado) !== formatearRango(rango) ? ` (enviado como ${formatearRango(enviado)})` : ""}` +
+          ` y Drive contesto ${intento.res.status} con el archivo entero.${aviso}`,
+      });
+    }
+  }
+
+  if (!intento.res.body) {
+    throw new ErrorProxy(502, "upstream", {
+      upstreamStatus: intento.res.status,
+      detalle: "Drive no devolvio contenido",
+    });
+  }
+
+  const declarado = totalDeContentRange(intento.res.headers.get("content-range"));
+  if (declarado !== null) {
+    total = declarado;
+  } else if (!rango) {
+    const len = Number(intento.res.headers.get("content-length") || "0");
+    if (len > 0) total = len;
+  }
+  recordarTotal(fileId, total);
+
+  return { res: intento.res, url: intento.url, total, enviado };
 }
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
-  if (req.method !== "GET") {
-    return new Response(JSON.stringify({ ok: false, error: "solo GET" }), {
-      status: 405,
-      headers: { ...CORS, "Content-Type": "application/json" },
-    });
-  }
 
+  const id = nuevoIdFallo();
   const url = new URL(req.url);
   const action = url.searchParams.get("action");
+  const fileId = url.searchParams.get("fileId");
+  // `range` se lee aca arriba (y no dentro del try) para que el cuerpo de
+  // error pueda decir QUE se estaba pidiendo: sin eso, el log del fallo no
+  // sirve para reproducirlo.
+  const rangeParam = url.searchParams.get("range");
+  const rangeCrudo = req.headers.get("range") || (rangeParam ? `bytes=${rangeParam}` : null);
+  let rangeEnviado: string | null = null;
+
+  const responderError = (err: ErrorProxy): Response => {
+    const cuerpo = cuerpoDeError(err, { fileId, range: rangeCrudo, rangeEnviado, id });
+    // Los logs de Supabase son lo unico que se puede leer despues de que
+    // pasó: la linea lleva lo MISMO que se le devolvio a quien pidio, para
+    // poder cruzarlas por el `id`.
+    console.error("concepts-drive fallo", JSON.stringify(cuerpo));
+    return new Response(JSON.stringify(cuerpo), { status: err.estado, headers: JSON_CORS });
+  };
+
+  if (req.method !== "GET") {
+    return responderError(new ErrorProxy(405, "pedido-invalido", { detalle: "solo GET" }));
+  }
 
   try {
     if (action === "list") {
       const folderId = url.searchParams.get("folderId") || "";
-      if (!folderId) throw new Error("falta folderId");
+      if (!folderId) throw new ErrorProxy(400, "pedido-invalido", { detalle: "falta folderId" });
       validarIdDrive(folderId, "folderId");
       const ahora = new Date();
       const [entradas, ivdTimes] = await Promise.all([
@@ -332,24 +562,31 @@ Deno.serve(async (req) => {
           return b.modifiedAt.localeCompare(a.modifiedAt);
         });
 
-      return new Response(JSON.stringify({ ok: true, folders, files }), {
-        headers: { ...CORS, "Content-Type": "application/json" },
-      });
+      return new Response(JSON.stringify({ ok: true, folders, files }), { headers: JSON_CORS });
     }
 
     if (action === "download") {
-      const fileId = url.searchParams.get("fileId") || "";
-      if (!fileId) throw new Error("falta fileId");
+      if (!fileId) throw new ErrorProxy(400, "pedido-invalido", { detalle: "falta fileId" });
       validarIdDrive(fileId, "fileId");
 
       // El rango puede venir por header (fetch normal) o por query param: el
       // navegador NO deja setear Range a mano en algunos contextos y ademas
       // por query se cachea mejor en el CDN.
-      const rangeParam = url.searchParams.get("range");
-      const range = req.headers.get("range") || (rangeParam ? `bytes=${rangeParam}` : null);
+      let rango: RangoPedido | null;
+      try {
+        rango = parsearRango(rangeCrudo);
+      } catch (e) {
+        if (e instanceof RangoInvalido) {
+          throw new ErrorProxy(400, "pedido-invalido", { detalle: e.message });
+        }
+        throw e;
+      }
       const urlPrevia = urlResueltaValida(url.searchParams.get("u"));
 
-      const { res: upstream, url: urlUsada } = await descargarDeDrive(fileId, range, urlPrevia);
+      const descarga = await descargarDeDrive(fileId, rango, urlPrevia);
+      rangeEnviado = descarga.enviado ? formatearRango(descarga.enviado) : null;
+      const upstream = descarga.res;
+
       const headers: Record<string, string> = {
         ...CORS,
         "Content-Type": "application/octet-stream",
@@ -357,35 +594,28 @@ Deno.serve(async (req) => {
         "Accept-Ranges": "bytes",
         // El cliente la reenvia en los siguientes rangos para saltear la
         // resolucion del interstitial.
-        "X-Drive-Url": urlUsada,
+        "X-Drive-Url": descarga.url,
       };
       // Pasar el tamaño permite al cliente mostrar progreso de descarga en
       // archivos grandes en vez de quedarse mudo varios segundos.
       const len = upstream.headers.get("content-length");
       if (len) headers["Content-Length"] = len;
       const cr = upstream.headers.get("content-range");
-      if (cr) {
-        headers["Content-Range"] = cr;
-        // El total del archivo va tambien en un header propio: es lo que el
-        // lector de zip necesita para ubicar el indice al final, y asi no
-        // tiene que parsear Content-Range.
-        const total = /\/(\d+)$/.exec(cr);
-        if (total) headers["X-Drive-Total"] = total[1];
-      }
+      if (cr) headers["Content-Range"] = cr;
+      // El total del archivo va tambien en un header propio: es lo que el
+      // lector de zip necesita para ubicar el indice al final, y asi no
+      // tiene que parsear Content-Range. Desde R3-01 sale tambien cuando el
+      // total se supo por el cache y la respuesta no trajo Content-Range.
+      if (descarga.total !== null) headers["X-Drive-Total"] = String(descarga.total);
+
       return new Response(upstream.body, {
         status: upstream.status === 206 ? 206 : 200,
         headers,
       });
     }
 
-    return new Response(JSON.stringify({ ok: false, error: "action invalida (list|download)" }), {
-      status: 400,
-      headers: { ...CORS, "Content-Type": "application/json" },
-    });
+    throw new ErrorProxy(400, "pedido-invalido", { detalle: "action invalida (list|download)" });
   } catch (e) {
-    return new Response(JSON.stringify({ ok: false, error: String(e).slice(0, 300) }), {
-      status: 502,
-      headers: { ...CORS, "Content-Type": "application/json" },
-    });
+    return responderError(comoErrorProxy(e));
   }
 });
