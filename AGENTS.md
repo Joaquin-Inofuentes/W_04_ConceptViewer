@@ -1,5 +1,5 @@
 <!-- analizador:inicio -->
-# _Otros_Web_CS_ConceptSerializer — el mapa está en `0_MAPA_IA~/`
+# W_04_ConceptViewer — el mapa está en `0_MAPA_IA~/`
 
 Antes de explorar el código: `cat 0_MAPA_IA~/IA_00_BRIEF.md`.
 Con un bug: `grep -i 'palabra del síntoma' 0_MAPA_IA~/IA_70_SINTOMAS.*`.
