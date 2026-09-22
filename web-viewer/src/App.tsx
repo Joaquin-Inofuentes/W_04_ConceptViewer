@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { AnimatePresence, LazyMotion, domAnimation, m } from 'motion/react';
 import { Gallery } from './Gallery/Gallery';
 import { NamePrompt } from './Gallery/NamePrompt';
+import { PortalVolver } from './PortalVolver';
 import { logCerrar } from './Gallery/analytics';
 import { getUserName, setUserName } from './Gallery/userIdentity';
 import { registrarAbierto } from './Gallery/recientes';
@@ -229,6 +230,7 @@ function App() {
     // aca solo se usen fades y springs simples. Con domAnimation el bundle
     // baja ~20 KB gzip, que en 3G es tiempo de arranque real.
     <LazyMotion features={domAnimation} strict>
+      <PortalVolver />
       <Gallery
         hidden={!!fileData}
         userName={userName}

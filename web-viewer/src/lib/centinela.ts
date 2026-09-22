@@ -19,6 +19,8 @@ declare global {
       sesionVencida: () => void;
       estado: () => unknown;
       incidente: string;
+      volver: () => void;
+      contexto: "documento" | "iframe";
     };
   }
 }
@@ -86,5 +88,30 @@ export function sesionVencida(): void {
     centinela()?.sesionVencida();
   } catch {
     /* nunca tira */
+  }
+}
+
+/** Mismo boton "Volver al portal" que usa la pantalla de fallback del
+ * centinela: avisa al Portal por postMessage ({unx:'volver',v:1}) y, si en
+ * 1500 ms nadie respondio (no esta embebido, o el Portal no esta), navega a
+ * la raiz. La navegacion la resuelve el centinela: esta funcion no implementa
+ * nada propio, solo delega. */
+export function volver(): void {
+  try {
+    centinela()?.volver();
+  } catch {
+    /* nunca tira */
+  }
+}
+
+/** "documento" | "iframe" | null. Sin centinela (kill switch, o esta pagina
+ * abierta fuera del gateway) no hay forma confiable de saberlo, asi que cada
+ * lugar que la usa decide su propio plan B (ver PortalVolver.tsx: cae a
+ * `window.self !== window.top`). */
+export function contexto(): "documento" | "iframe" | null {
+  try {
+    return centinela()?.contexto ?? null;
+  } catch {
+    return null;
   }
 }

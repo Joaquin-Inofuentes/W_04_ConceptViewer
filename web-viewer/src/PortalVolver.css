@@ -1,0 +1,29 @@
+/* Chip flotante, no una barra: esta app no tiene cabecera compartida entre
+   la galeria y el visor de planos (ver PortalVolver.tsx). Top-left porque
+   `.gallery-header-actions` (Gallery.css) vive arriba a la derecha, y los
+   controles propios del visor (VisorConcept/App.css) tampoco usan esa
+   esquina. z-index por encima de `.viewer-hero` (index.css, 1000) y de
+   `.fullscreen-preview` (VisorConcept/App.css, 10000): tiene que seguir
+   visible aunque haya un dibujo abierto o una imagen a pantalla completa. */
+.portal-volver {
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  z-index: 10050;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--text-main);
+  font-size: 12px;
+  font-family: 'Inter Variable', Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg-elevado);
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  padding: 4px 11px 4px 9px;
+  box-shadow: var(--sombra-suave);
+  cursor: pointer;
+}
+
+.portal-volver:hover {
+  background: var(--bg-hover);
+}
