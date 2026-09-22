@@ -237,7 +237,6 @@ function App() {
           el componente entero: PortalVolver.tsx y PortalVolver.css. */}
       <Gallery
         hidden={!!fileData}
-        userName={userName}
         onOpen={openRemote}
         onUpload={openLocal}
         rutaInicial={rutaInicial}

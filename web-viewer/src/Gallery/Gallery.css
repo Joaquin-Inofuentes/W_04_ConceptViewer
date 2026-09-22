@@ -17,50 +17,58 @@
   margin: 0 auto 1.5rem;
 }
 
-.gallery-header h1 {
-  font-size: 1.5rem;
-  font-weight: 600;
-  margin: 0 0 0.15rem;
-}
-
-.gallery-subtitle {
-  margin: 0;
-  font-size: 0.85rem;
-  color: var(--text-muted, #6c757d);
-}
-
 .gallery-header-actions {
   display: flex;
   align-items: center;
   gap: 0.6rem;
 }
 
-.gallery-upload-btn,
-.gallery-drive-btn {
+.gallery-search {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  padding: 0.55rem 1rem;
-  background: var(--bg-elevado);
+  flex: 1;
+  max-width: 420px;
+}
+.gallery-search-icon {
+  position: absolute;
+  left: 0.7rem;
+  color: var(--text-muted, #6c757d);
+  pointer-events: none;
+}
+.gallery-search input {
+  width: 100%;
+  padding: 0.55rem 2.1rem;
   border: 1px solid var(--border-color, #dee2e6);
   border-radius: 8px;
-  box-shadow: var(--sombra-suave);
-  font-weight: 500;
-  font-size: 0.85rem;
+  background: var(--bg-elevado);
   color: var(--text-main, #212529);
-  white-space: nowrap;
-  text-decoration: none;
-  transition: background 0.3s ease, border-color 0.3s ease, transform 0.15s ease;
+  font-size: 0.85rem;
+  font-family: inherit;
+  transition: border-color 0.25s ease, box-shadow 0.25s ease;
 }
-.gallery-upload-btn:hover,
-.gallery-drive-btn:hover {
-  background: var(--bg-hover);
+.gallery-search input:focus {
+  outline: none;
   border-color: var(--primary, #0d6efd);
+  box-shadow: 0 0 0 3px var(--glow, rgba(13, 110, 253, 0.4));
 }
-.gallery-upload-btn:active,
-.gallery-drive-btn:active {
-  transform: scale(0.97);
+.gallery-search-clear {
+  position: absolute;
+  right: 0.4rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--text-muted, #6c757d);
+  cursor: pointer;
+}
+.gallery-search-clear:hover {
+  color: var(--text-main, #212529);
+  background: var(--bg-hover);
 }
 
 .gallery-breadcrumb {
@@ -639,13 +647,21 @@
     flex-wrap: wrap;
     width: 100%;
   }
+  .gallery-search {
+    max-width: none;
+    width: 100%;
+  }
 }
 
 /* --- Tema, restablecer y recientes ------------------------------------ */
 
-/* El toggle de tema y el de restablecer comparten el estilo de los iconos de
-   la barra de navegacion, para que la cabecera no se llene de botones con
-   pesos visuales distintos. */
+/* Los cuatro botones de la cabecera (Drive, subir, tema, restablecer)
+   comparten el mismo tamaño de icono-cuadrado, para que la cabecera no se
+   llene de botones con pesos visuales distintos. Drive/subir ya no llevan
+   texto (ver Gallery.tsx): con `.gallery-icon-btn` alcanzaba para el icono,
+   pero esta regla fija el tamaño 38px en vez del 30px por defecto. */
+.gallery-drive-btn,
+.gallery-upload-btn,
 .gallery-tema-btn,
 .gallery-reset-btn {
   width: 38px;

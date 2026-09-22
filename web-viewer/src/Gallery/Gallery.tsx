@@ -3,7 +3,7 @@ import { AnimatePresence, m } from "motion/react";
 import {
   Upload, RefreshCw, AlertTriangle, CheckCircle2, Circle, Download, X,
   FileText, Image as ImageIcon, FolderOpen, Folder, Home, ChevronLeft, ChevronRight,
-  Sun, Moon, Trash2, Clock,
+  Sun, Moon, Trash2, Clock, Search,
 } from "lucide-react";
 import { listDriveFolder, driveFileUrl, driveAuthHeaders } from "./driveClient";
 import type { DriveFolderRef, DriveListing } from "./driveClient";
@@ -52,9 +52,15 @@ interface SelectedRef {
   name: string;
 }
 
+interface ResultadoBusqueda {
+  id: string;
+  name: string;
+  /** Ruta legible desde la raiz hasta la carpeta que contiene el archivo. */
+  ruta: string[];
+}
+
 interface GalleryProps {
   hidden: boolean;
-  userName: string | null;
   /** `ruta` son los nombres de las carpetas contenedoras (sin la raiz): sirve
    * para armar la URL compartible y la lista de recientes. */
   onOpen: (fileId: string, name: string, originRect: DOMRect | null, ruta: string[]) => void;
@@ -75,6 +81,38 @@ const ROOT_CRUMB: FolderCrumb = { id: DRIVE_FOLDER_ID, name: "Inicio" };
 
 function cleanName(name: string) {
   return name.replace(/\s+/g, " ").trim().replace(/\.concepts$/i, "");
+}
+
+const LIMITE_RESULTADOS_BUSQUEDA = 30;
+
+/**
+ * Busca por nombre en TODO el arbol de carpetas cacheado (`folderTreeCacheRef`),
+ * no solo en la carpeta actual: ese arbol ya esta completo en memoria desde el
+ * arranque (`fetchAllFolderCache` trae el cache entero, compartido entre
+ * usuarios), asi que buscar ahi es gratis -- no hace falta pegarle a Drive ni
+ * restringir la busqueda a donde la persona esta parada.
+ */
+function buscarEnArbol(arbol: Map<string, FolderCacheRow>, query: string): ResultadoBusqueda[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  const padre = new Map<string, string>();
+  arbol.forEach((fila) => fila.subfolders.forEach((sub) => padre.set(sub.id, fila.folder_id)));
+  const resultados: ResultadoBusqueda[] = [];
+  for (const fila of arbol.values()) {
+    for (const archivo of fila.files) {
+      const nombre = cleanName(archivo.name);
+      if (!nombre.toLowerCase().includes(q)) continue;
+      const ruta: string[] = [];
+      let actual: string | undefined = fila.folder_id;
+      while (actual && padre.has(actual)) {
+        ruta.unshift(arbol.get(actual)?.name || "");
+        actual = padre.get(actual);
+      }
+      resultados.push({ id: archivo.id, name: nombre, ruta });
+      if (resultados.length >= LIMITE_RESULTADOS_BUSQUEDA) return resultados;
+    }
+  }
+  return resultados;
 }
 
 function formatModified(modifiedAt: string | null, hasTime: boolean): string {
@@ -184,9 +222,10 @@ async function runPool<T>(items: T[], limit: number, worker: (item: T) => Promis
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => next()));
 }
 
-export function Gallery({ hidden, userName, onOpen, onUpload, rutaInicial, onRutaCambio, onListo }: GalleryProps) {
+export function Gallery({ hidden, onOpen, onUpload, rutaInicial, onRutaCambio, onListo }: GalleryProps) {
   const [tema, setTema] = useState<Tema>(() => temaGuardado());
   const [recientes, setRecientes] = useState<Reciente[]>([]);
+  const [busqueda, setBusqueda] = useState("");
   const [confirmarReset, setConfirmarReset] = useState(false);
   const [folderStack, setFolderStack] = useState<FolderCrumb[]>([ROOT_CRUMB]);
   const [folders, setFolders] = useState<DriveFolderRef[]>([]);
@@ -605,7 +644,7 @@ export function Gallery({ hidden, userName, onOpen, onUpload, rutaInicial, onRut
   const cambiarTema = () => setTema(alternarTema());
 
   useEffect(() => {
-    void listarRecientes(6).then(setRecientes);
+    void listarRecientes(3).then(setRecientes);
   }, [hidden]);
 
   const restablecerTodo = async () => {
@@ -800,6 +839,13 @@ export function Gallery({ hidden, userName, onOpen, onUpload, rutaInicial, onRut
   const driveFolderUrl = `https://drive.google.com/drive/folders/${currentFolder.id}`;
   const isEmpty = !listLoading && folders.length === 0 && items.length === 0 && !listError;
   const selectedCount = selected.size;
+  const buscando = busqueda.trim().length > 0;
+  // Se recalcula en cada render (no useMemo): el arbol cacheado vive en un
+  // ref (`folderTreeCacheRef`, no dispara re-render solo), asi que la unica
+  // forma de que un resultado nuevo aparezca apenas se cachea una carpeta es
+  // recalcular siempre -- el costo es recorrer a lo sumo unos cientos de
+  // archivos con un `includes`, insignificante frente a re-renderizar.
+  const resultadosBusqueda = buscando ? buscarEnArbol(folderTreeCacheRef.current, busqueda) : [];
 
   return (
     <div
@@ -815,23 +861,39 @@ export function Gallery({ hidden, userName, onOpen, onUpload, rutaInicial, onRut
       style={hidden ? { visibility: "hidden" } : undefined}
     >
       <header className="gallery-header">
-        <div>
-          <h1>ConceptSerializer</h1>
-          <p className="gallery-subtitle">
-            {userName ? `Bienvenido ${userName}. Selecciona tu lienzo o carpeta.` : "Dibujos disponibles en Drive"}
-          </p>
+        <div className="gallery-search">
+          <Search size={15} className="gallery-search-icon" />
+          <input
+            type="text"
+            value={busqueda}
+            onChange={(e) => setBusqueda(e.target.value)}
+            placeholder="Buscar por nombre de archivo..."
+            aria-label="Buscar por nombre de archivo"
+          />
+          {buscando && (
+            <button
+              type="button"
+              className="gallery-search-clear"
+              onClick={() => setBusqueda("")}
+              aria-label="Limpiar busqueda"
+            >
+              <X size={14} />
+            </button>
+          )}
         </div>
         <div className="gallery-header-actions">
           <a
-            className="gallery-drive-btn"
+            className="gallery-icon-btn gallery-drive-btn"
             href={driveFolderUrl}
             target="_blank"
             rel="noopener noreferrer"
+            title="Ver carpeta de Drive"
+            aria-label="Ver carpeta de Drive"
           >
-            <FolderOpen size={16} /> Ver carpeta de Drive
+            <FolderOpen size={16} />
           </a>
-          <label className="gallery-upload-btn">
-            <Upload size={16} /> Subir .concepts
+          <label className="gallery-icon-btn gallery-upload-btn" title="Subir .concepts" aria-label="Subir .concepts">
+            <Upload size={16} />
             <input type="file" accept=".concepts" onChange={handleUpload} hidden />
           </label>
           <button
@@ -855,65 +917,13 @@ export function Gallery({ hidden, userName, onOpen, onUpload, rutaInicial, onRut
         </div>
       </header>
 
-      <div className="gallery-breadcrumb">
-        <button
-          className="gallery-icon-btn"
-          onClick={() => navigateToCrumb(0)}
-          disabled={folderStack.length === 1}
-          title="Ir al inicio"
-        >
-          <Home size={15} />
-        </button>
-        <button
-          className="gallery-icon-btn"
-          onClick={navigateBack}
-          disabled={folderStack.length === 1}
-          title="Volver"
-        >
-          <ChevronLeft size={15} />
-        </button>
-        <div className="gallery-breadcrumb-trail">
-          {folderStack.map((crumb, i) => (
-            <span key={crumb.id} className="gallery-breadcrumb-crumb">
-              {i > 0 && <ChevronRight size={12} className="gallery-breadcrumb-sep" />}
-              <button
-                className={`gallery-breadcrumb-item ${i === folderStack.length - 1 ? "current" : ""}`}
-                onClick={() => navigateToCrumb(i)}
-                disabled={i === folderStack.length - 1}
-              >
-                {crumb.name}
-              </button>
-            </span>
-          ))}
-        </div>
-        <button
-          className="gallery-icon-btn"
-          onClick={handleRefresh}
-          disabled={refreshing || listLoading}
-          title="Actualizar"
-        >
-          <RefreshCw size={15} className={refreshing ? "spin-slow" : ""} />
-        </button>
-      </div>
-
-      {pendingCount > 0 && (
-        <div className="gallery-status" role="status" aria-live="polite">
-          <RefreshCw size={13} className="spin-slow" />
-          Generando miniaturas: {items.length - pendingCount} de {items.length}
-          {cachedCount > 0 ? ` (${cachedCount} desde cache)` : ""}
-        </div>
-      )}
-
-      {listError && (
-        <div className="gallery-error">
-          <AlertTriangle size={16} /> {listError}
-        </div>
-      )}
-
-      {/* Ultimos abiertos: solo en la raiz, para no tapar el contenido de la
-          carpeta en la que estas. Guarda unicamente rutas (ver recientes.ts),
-          asi que mostrarlos no cuesta ni red ni memoria. */}
-      {folderStack.length === 1 && recientes.length > 0 && (
+      {/* Ultimos abiertos: arriba de todo (antes del buscador de carpeta
+          actual), solo en la raiz para no tapar el contenido de la carpeta
+          en la que estas. Guarda unicamente rutas (ver recientes.ts), asi
+          que mostrarlos no cuesta ni red ni memoria. Se oculta mientras se
+          busca: el resultado de la busqueda ya cumple el mismo rol de
+          "acceso rapido a un archivo". */}
+      {!buscando && folderStack.length === 1 && recientes.length > 0 && (
         <section className="gallery-recientes">
           <h2>
             <Clock size={14} /> Ultimos abiertos
@@ -934,72 +944,154 @@ export function Gallery({ hidden, userName, onOpen, onUpload, rutaInicial, onRut
         </section>
       )}
 
-      {isEmpty && <div className="gallery-empty">Esta carpeta esta vacia.</div>}
-
-      {listLoading ? (
-        <div className="gallery-grid">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div className="gallery-card skeleton" key={i}>
-              <div className="gallery-thumb skeleton-shimmer" />
-              <div className="gallery-name skeleton-line" />
+      {buscando ? (
+        <section className="gallery-recientes">
+          <h2>
+            <Search size={14} /> Resultados{resultadosBusqueda.length > 0 ? ` (${resultadosBusqueda.length})` : ""}
+          </h2>
+          {resultadosBusqueda.length === 0 ? (
+            <div className="gallery-empty">Sin resultados para "{busqueda.trim()}".</div>
+          ) : (
+            <div className="gallery-recientes-lista">
+              {resultadosBusqueda.map((r) => (
+                <button
+                  key={r.id}
+                  className="gallery-reciente"
+                  onClick={() => onOpen(r.id, r.name, null, r.ruta)}
+                  title={[...r.ruta, r.name].join(" / ")}
+                >
+                  <span className="gallery-reciente-nombre">{r.name}</span>
+                  {r.ruta.length > 0 && <span className="gallery-reciente-ruta">{r.ruta.join(" / ")}</span>}
+                </button>
+              ))}
             </div>
-          ))}
-        </div>
+          )}
+        </section>
       ) : (
         <>
-          {folders.length > 0 && (
-            <div className="gallery-grid gallery-folders-grid">
-              {folders.map((folder, idx) => {
-                const checked = selected.has(folder.id);
-                return (
-                  <div
-                    key={folder.id}
-                    className={`gallery-card folder-card ${checked ? "selected" : ""}`}
-                    style={{ animationDelay: `${Math.min(idx, 12) * 35}ms` }}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => handleFolderActivate(folder)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        handleFolderActivate(folder);
-                      }
-                    }}
-                    title={folder.name}
+          <div className="gallery-breadcrumb">
+            <button
+              className="gallery-icon-btn"
+              onClick={() => navigateToCrumb(0)}
+              disabled={folderStack.length === 1}
+              title="Ir al inicio"
+            >
+              <Home size={15} />
+            </button>
+            <button
+              className="gallery-icon-btn"
+              onClick={navigateBack}
+              disabled={folderStack.length === 1}
+              title="Volver"
+            >
+              <ChevronLeft size={15} />
+            </button>
+            <div className="gallery-breadcrumb-trail">
+              {folderStack.map((crumb, i) => (
+                <span key={crumb.id} className="gallery-breadcrumb-crumb">
+                  {i > 0 && <ChevronRight size={12} className="gallery-breadcrumb-sep" />}
+                  <button
+                    className={`gallery-breadcrumb-item ${i === folderStack.length - 1 ? "current" : ""}`}
+                    onClick={() => navigateToCrumb(i)}
+                    disabled={i === folderStack.length - 1}
                   >
-                    <button
-                      type="button"
-                      className={`gallery-checkbox ${checked ? "checked" : ""}`}
-                      onClick={(e) => handleCheckboxClick(e, { kind: "folder", id: folder.id, name: folder.name })}
-                      role="checkbox"
-                      aria-checked={checked}
-                      aria-label={checked ? "Deseleccionar carpeta" : "Seleccionar carpeta"}
-                    >
-                      {checked ? <CheckCircle2 size={20} /> : <Circle size={20} />}
-                    </button>
-                    <div className="gallery-thumb folder-thumb">
-                      <Folder size={30} />
-                    </div>
-                    <div className="gallery-name">{folder.name}</div>
-                  </div>
-                );
-              })}
+                    {crumb.name}
+                  </button>
+                </span>
+              ))}
+            </div>
+            <button
+              className="gallery-icon-btn"
+              onClick={handleRefresh}
+              disabled={refreshing || listLoading}
+              title="Actualizar"
+            >
+              <RefreshCw size={15} className={refreshing ? "spin-slow" : ""} />
+            </button>
+          </div>
+
+          {pendingCount > 0 && (
+            <div className="gallery-status" role="status" aria-live="polite">
+              <RefreshCw size={13} className="spin-slow" />
+              Generando miniaturas: {items.length - pendingCount} de {items.length}
+              {cachedCount > 0 ? ` (${cachedCount} desde cache)` : ""}
             </div>
           )}
 
-          {items.length > 0 && (
+          {listError && (
+            <div className="gallery-error">
+              <AlertTriangle size={16} /> {listError}
+            </div>
+          )}
+
+          {isEmpty && <div className="gallery-empty">Esta carpeta esta vacia.</div>}
+
+          {listLoading ? (
             <div className="gallery-grid">
-              {items.map((item, idx) => (
-                <TarjetaArchivo
-                  key={item.id}
-                  item={item}
-                  idx={idx}
-                  checked={selected.has(item.id)}
-                  onActivate={handleCardActivate}
-                  onToggleCheck={handleCheckboxClick}
-                />
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div className="gallery-card skeleton" key={i}>
+                  <div className="gallery-thumb skeleton-shimmer" />
+                  <div className="gallery-name skeleton-line" />
+                </div>
               ))}
             </div>
+          ) : (
+            <>
+              {folders.length > 0 && (
+                <div className="gallery-grid gallery-folders-grid">
+                  {folders.map((folder, idx) => {
+                    const checked = selected.has(folder.id);
+                    return (
+                      <div
+                        key={folder.id}
+                        className={`gallery-card folder-card ${checked ? "selected" : ""}`}
+                        style={{ animationDelay: `${Math.min(idx, 12) * 35}ms` }}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => handleFolderActivate(folder)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            handleFolderActivate(folder);
+                          }
+                        }}
+                        title={folder.name}
+                      >
+                        <button
+                          type="button"
+                          className={`gallery-checkbox ${checked ? "checked" : ""}`}
+                          onClick={(e) => handleCheckboxClick(e, { kind: "folder", id: folder.id, name: folder.name })}
+                          role="checkbox"
+                          aria-checked={checked}
+                          aria-label={checked ? "Deseleccionar carpeta" : "Seleccionar carpeta"}
+                        >
+                          {checked ? <CheckCircle2 size={20} /> : <Circle size={20} />}
+                        </button>
+                        <div className="gallery-thumb folder-thumb">
+                          <Folder size={30} />
+                        </div>
+                        <div className="gallery-name">{folder.name}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {items.length > 0 && (
+                <div className="gallery-grid">
+                  {items.map((item, idx) => (
+                    <TarjetaArchivo
+                      key={item.id}
+                      item={item}
+                      idx={idx}
+                      checked={selected.has(item.id)}
+                      onActivate={handleCardActivate}
+                      onToggleCheck={handleCheckboxClick}
+                    />
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </>
       )}
