@@ -559,15 +559,14 @@ export const InteractivePreview: React.FC<InteractivePreviewProps> = ({ src, pho
 
       <button
         onClick={onClose}
+        className="btn-cerrar-preview"
         style={{
           position: 'absolute',
           // env(safe-area-inset-*): sin esto, en un iPhone en landscape el
           // boton quedaba bajo el notch.
           top: 'calc(20px + env(safe-area-inset-top))',
           right: 'calc(20px + env(safe-area-inset-right))',
-          zIndex: 10001, background: 'rgba(255,255,255,0.2)',
-          border: 'none', color: 'white', padding: '8px 16px',
-          borderRadius: '4px', cursor: 'pointer'
+          zIndex: 10001,
         }}
       >
         Cerrar (ESC)

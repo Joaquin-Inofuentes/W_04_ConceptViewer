@@ -54,14 +54,23 @@ body {
 /* UI Elements */
 .filename-display {
   position: absolute;
-  top: 10px;
-  left: 10px;
+  /* Mismo motivo que .btn-close-viewer: respeta el notch en landscape. */
+  top: calc(10px + env(safe-area-inset-top));
+  left: calc(10px + env(safe-area-inset-left));
   font-size: 0.75rem;
   font-weight: 500;
   color: var(--text-main);
-  background: transparent;
+  background: var(--bg-elevado);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 6px 12px;
+  box-shadow: var(--sombra);
   pointer-events: none;
   z-index: 50;
+  max-width: calc(100vw - 80px - env(safe-area-inset-left) - env(safe-area-inset-right));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .btn-close-viewer {
@@ -78,7 +87,7 @@ body {
   z-index: 50;
   padding: 4px;
   border-radius: 4px;
-  transition: all 0.1s ease;
+  transition: all 1s ease;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -123,7 +132,7 @@ body {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: all 0.1s ease;
+  transition: all 1s ease;
   box-shadow: var(--sombra);
 }
 .btn-tool:hover {
@@ -197,10 +206,48 @@ body {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: background 0.1s ease;
+  transition: background 1s ease;
 }
 .plano-nav-btn:hover {
   background: var(--bg-color);
+}
+
+/* Opacidad de imagenes: mismo estilo de rectangulo que .plano-nav-bar, fija
+   abajo a la izquierda. Apilada ARRIBA de la fila de .plano-nav-bar (no a su
+   misma altura): con las dos ancladas a `bottom` e izquierda/centro, en una
+   pantalla angosta la centrada avanza lo bastante hacia la izquierda como
+   para pisar esta -- separarlas en vertical las deja sin chocar sin
+   importar cuan angosta sea la pantalla. */
+.opacidad-bar {
+  position: absolute;
+  left: calc(20px + env(safe-area-inset-left));
+  bottom: calc(20px + 50px + env(safe-area-inset-bottom));
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-elevado);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  box-shadow: var(--sombra);
+  padding: 6px 12px;
+  z-index: 50;
+  color: var(--text-main);
+  opacity: 0.85;
+  transition: opacity 1s ease;
+}
+.opacidad-bar:hover {
+  opacity: 1;
+}
+.opacidad-slider {
+  width: 90px;
+}
+.opacidad-valor {
+  font-size: 0.7rem;
+  color: var(--text-main);
+  opacity: 0.75;
+  min-width: 2.6em;
+  text-align: right;
+  user-select: none;
 }
 .plano-nav-indicador {
   font-size: 0.75rem;
@@ -251,6 +298,7 @@ body {
   cursor: pointer;
   color: var(--text-main);
   white-space: nowrap;
+  transition: background 1s ease, border-color 1s ease;
 }
 .btn-tiny:disabled {
   opacity: 0.55;
@@ -307,6 +355,7 @@ body {
   padding: 0.2rem;
   border-radius: 4px;
   color: var(--text-muted);
+  transition: background 1s ease, color 1s ease;
 }
 .icon-btn:hover {
   background: var(--bg-color);
@@ -336,7 +385,7 @@ body {
   justify-content: center;
   background: var(--bg-color);
   cursor: pointer;
-  transition: transform 0.1s ease, border-color 0.1s ease;
+  transition: transform 1s ease, border-color 1s ease;
 }
 .gallery-item:active {
   transform: scale(0.92);
@@ -351,6 +400,22 @@ body {
 }
 .gallery-item:hover {
   border-color: var(--primary);
+}
+
+.btn-cerrar-preview {
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  color: white;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 1s ease, transform 1s ease;
+}
+.btn-cerrar-preview:hover {
+  background: rgba(255, 255, 255, 0.32);
+}
+.btn-cerrar-preview:active {
+  transform: scale(0.95);
 }
 
 .pdf-thumbnail {

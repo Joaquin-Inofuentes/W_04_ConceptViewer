@@ -155,21 +155,21 @@ const LayerMenu = memo(function LayerMenu({
 interface ImageMenuProps {
   open: boolean;
   imageCount: number;
-  imageOpacity: number;
   resourceIds: string[];
   imageUrls: Record<string, string>;
   menuRef: React.RefObject<HTMLDivElement | null>;
   onToggleOpen: () => void;
-  onSetImageOpacity: (v: number) => void;
   onOpenPhoto: (resourceId: string, thumbUrl: string) => void;
 }
 
-/** Icono + desplegable de galeria/opacidad de imagenes, mismo motivo que
- * `LayerMenu`: separado y memoizado para que arrastrar ESTE slider no
- * reconstruya el menu de capas ni la toolbar. */
+/** Icono + desplegable de galeria de imagenes, mismo motivo que
+ * `LayerMenu`: separado y memoizado para que abrir este desplegable no
+ * reconstruya el menu de capas ni la toolbar. La opacidad de las imagenes
+ * vive en su propia barra flotante (`.opacidad-bar`, mas abajo), no aca
+ * adentro -- antes habia que abrir este menu para encontrarla. */
 const ImageMenu = memo(function ImageMenu({
-  open, imageCount, imageOpacity, resourceIds, imageUrls, menuRef,
-  onToggleOpen, onSetImageOpacity, onOpenPhoto,
+  open, imageCount, resourceIds, imageUrls, menuRef,
+  onToggleOpen, onOpenPhoto,
 }: ImageMenuProps) {
   return (
     <div className="dropdown-container" ref={menuRef}>
@@ -187,22 +187,6 @@ const ImageMenu = memo(function ImageMenu({
           <div className="layer-menu-header">
             <span>Galería</span>
             <span style={{ fontSize: '0.7rem', color: '#888' }}>ESC para cerrar</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', borderBottom: '1px solid rgba(128,128,128,0.2)' }}>
-            <ImageIcon size={14} style={{ flexShrink: 0, opacity: 0.7 }} />
-            <input
-              type="range"
-              min="0" max="1" step="0.05"
-              value={imageOpacity}
-              onChange={(e) => onSetImageOpacity(parseFloat(e.target.value))}
-              className="opacity-slider"
-              style={{ flex: 1 }}
-              title="Opacidad de las imágenes"
-              aria-label="Opacidad de las imágenes"
-            />
-            <span style={{ fontSize: '0.75rem', color: '#888', minWidth: '2.5em', textAlign: 'right' }}>
-              {Math.round(imageOpacity * 100)}%
-            </span>
           </div>
           <div className="image-gallery">
             {resourceIds.length > 0 ? resourceIds.map((id) => {
@@ -1051,12 +1035,10 @@ export function ConceptViewer({ source, onClose }: ViewerProps) {
         <ImageMenu
           open={showImageMenu}
           imageCount={stats.images}
-          imageOpacity={imageOpacity}
           resourceIds={doc.resourceIds}
           imageUrls={imageUrls}
           menuRef={imageMenuRef}
           onToggleOpen={toggleImageMenuOpen}
-          onSetImageOpacity={setImageOpacity}
           onOpenPhoto={abrirFoto}
         />
       </div>
@@ -1085,6 +1067,24 @@ export function ConceptViewer({ source, onClose }: ViewerProps) {
           >
             <ChevronRight size={18} />
           </button>
+        </div>
+      )}
+
+      {/* Opacidad de las imagenes: antes vivia adentro del desplegable de
+          "Imagenes" (habia que abrirlo para encontrarla); ahora es su propia
+          barra fija abajo a la izquierda, siempre a mano. */}
+      {stats.images > 0 && (
+        <div className="opacidad-bar" title="Opacidad de las imágenes">
+          <ImageIcon size={16} />
+          <input
+            type="range"
+            min="0" max="1" step="0.05"
+            value={imageOpacity}
+            onChange={(e) => setImageOpacity(parseFloat(e.target.value))}
+            className="opacidad-slider"
+            aria-label="Opacidad de las imágenes"
+          />
+          <span className="opacidad-valor">{Math.round(imageOpacity * 100)}%</span>
         </div>
       )}
 

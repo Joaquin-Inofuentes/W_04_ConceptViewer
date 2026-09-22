@@ -65,6 +65,7 @@
   background: none;
   color: var(--text-muted, #6c757d);
   cursor: pointer;
+  transition: background 1s ease, color 1s ease;
 }
 .gallery-search-clear:hover {
   color: var(--text-main, #212529);
@@ -92,7 +93,7 @@
   border-radius: 8px;
   color: var(--text-main, #212529);
   cursor: pointer;
-  transition: background 0.25s ease, border-color 0.25s ease, transform 0.15s ease, color 0.25s ease;
+  transition: background 1s ease, border-color 1s ease, transform 1s ease, color 1s ease;
   /* El boton se ve chico (30px, a proposito, no hay lugar en el header
      para mas) pero el area TOCABLE llega a 44px via un pseudo-elemento
      invisible mas grande -- por debajo de 44px es facil errarle en un
@@ -150,7 +151,7 @@
   max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
-  transition: background 0.25s ease, color 0.25s ease;
+  transition: background 1s ease, color 1s ease;
 }
 .gallery-breadcrumb-item:hover:not(:disabled) {
   background: var(--bg-hover);
@@ -237,7 +238,7 @@
   cursor: pointer;
   font-family: inherit;
   text-align: left;
-  transition: border-color 0.5s ease, box-shadow 0.5s ease, transform 0.15s ease;
+  transition: border-color 1s ease, box-shadow 1s ease, transform 1s ease;
   animation: cardIn 0.5s ease-out backwards;
   /* Red de seguridad barata: el navegador salta el layout/paint de las
      tarjetas fuera de pantalla (una carpeta grande puede tener cientos).
@@ -287,7 +288,7 @@
   justify-content: center;
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.5s ease, color 0.5s ease, background 0.5s ease;
+  transition: opacity 1s ease, color 1s ease, background 1s ease;
 }
 .gallery-card:hover .gallery-checkbox,
 .gallery-card:focus-within .gallery-checkbox,
@@ -442,7 +443,7 @@
   cursor: pointer;
   background: rgba(255, 255, 255, 0.12);
   color: #fff;
-  transition: background 0.25s ease, transform 0.15s ease;
+  transition: background 1s ease, transform 1s ease;
 }
 .gallery-toolbar-btn:hover {
   background: rgba(255, 255, 255, 0.2);
@@ -503,7 +504,7 @@
   background: var(--bg-elevado);
   cursor: pointer;
   color: var(--text-main, #212529);
-  transition: border-color 0.25s ease, background 0.25s ease, transform 0.15s ease;
+  transition: border-color 1s ease, background 1s ease, transform 1s ease;
 }
 .gallery-modal-option:hover {
   border-color: var(--primary, #0d6efd);
@@ -532,6 +533,7 @@
   font-size: 0.8rem;
   cursor: pointer;
   padding: 0.4rem;
+  transition: color 1s ease;
 }
 .gallery-modal-cancel:hover {
   color: var(--text-main, #212529);
@@ -722,7 +724,7 @@
   font: inherit;
   text-align: left;
   cursor: pointer;
-  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+  transition: border-color 1s ease, background 1s ease, transform 1s ease;
 }
 .gallery-reciente:hover {
   border-color: var(--primary);
