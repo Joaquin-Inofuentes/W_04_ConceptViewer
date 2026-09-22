@@ -110,9 +110,18 @@ body {
   margin: 0 auto;
 }
 
+/* 0px salvo embebida en el iframe del Portal (PortalVolver.tsx la sube a la
+   altura real de .cabecera-embebida): así el visor de dibujos, que es
+   position:fixed y por eso no lo corre estar despues de la cabecera en el
+   DOM, deja el mismo lugar libre arriba que ya deja la galeria en flujo
+   normal -- sin este var, la cabecera quedaba tapando el nombre de archivo
+   y el boton de cerrar del visor (ambos arriba, ver App.css). */
+:root { --cabecera-embebida-h: 0px; }
+
 .viewer-hero {
   position: fixed;
-  inset: 0;
+  top: var(--cabecera-embebida-h);
+  left: 0; right: 0; bottom: 0;
   z-index: 1000;
   background: var(--bg-canvas);
   overflow: hidden;

@@ -1,29 +1,56 @@
-/* Chip flotante, no una barra: esta app no tiene cabecera compartida entre
-   la galeria y el visor de planos (ver PortalVolver.tsx). Top-left porque
-   `.gallery-header-actions` (Gallery.css) vive arriba a la derecha, y los
-   controles propios del visor (VisorConcept/App.css) tampoco usan esa
-   esquina. z-index por encima de `.viewer-hero` (index.css, 1000) y de
-   `.fullscreen-preview` (VisorConcept/App.css, 10000): tiene que seguir
-   visible aunque haya un dibujo abierto o una imagen a pantalla completa. */
-.portal-volver {
-  position: fixed;
-  top: 10px;
-  left: 10px;
-  z-index: 10050;
+/* Renglon unico, delgado, en flujo normal (no un chip flotante -- ver el
+   comentario en PortalVolver.tsx sobre por que antes tapaba contenido).
+   `position: relative` (no `fixed`): sigue en el flujo, así que empuja a
+   `.gallery-page` hacia abajo solo, y `z-index` alto lo mantiene pintado por
+   encima de `.viewer-hero`/`.fullscreen-preview`, que sí son `fixed`. */
+.cabecera-embebida {
+  position: relative;
+  z-index: 10060;
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  min-height: 36px;
+  background: var(--bg-elevado);
+  border-bottom: 1px solid var(--border-color);
+  font-family: 'Inter Variable', Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+.cabecera-embebida-volver {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 3px;
-  color: var(--text-main);
   font-size: 12px;
-  font-family: 'Inter Variable', Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  background: var(--bg-elevado);
+  color: var(--text-main);
+  background: transparent;
   border: 1px solid var(--border-color);
-  border-radius: 999px;
-  padding: 4px 11px 4px 9px;
-  box-shadow: var(--sombra-suave);
+  border-radius: 6px;
+  padding: 4px 10px;
   cursor: pointer;
 }
-
-.portal-volver:hover {
+.cabecera-embebida-volver:hover {
   background: var(--bg-hover);
+}
+
+.cabecera-embebida-nombre {
+  flex: 1;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-main);
+  opacity: 0.85;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cabecera-embebida-version {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--text-main);
+  opacity: 0.45;
 }

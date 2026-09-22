@@ -3,16 +3,26 @@ import { contexto, volver } from './lib/centinela';
 import './PortalVolver.css';
 
 /**
- * Boton "‹ Volver" al Portal, visible SOLO cuando esta app corre embebida en
- * el iframe del Portal (babelbim.com/#concept). Fuera de ahi (dominio de
- * Vercel directo) no existe: no hay a donde volver.
+ * Renglon delgado "‹ Volver | Concept | <version>", visible SOLO cuando esta
+ * app corre embebida en el iframe del Portal (babelbim.com/#concept). Fuera
+ * de ahi (dominio de Vercel directo) no existe: no hay a donde volver.
  *
  * A diferencia de W_14_Admin (que lo pinta dentro de su propia `.cabecera`
  * sticky), esta app no tiene una barra de titulo compartida entre la galeria
  * y el visor de planos: `.gallery-header` (Gallery.tsx) se oculta en cuanto
  * hay un dibujo abierto, y el visor no tiene cabecera propia. Por eso este
- * componente vive a nivel de App.tsx, fuera de ambos arboles, como un chip
- * flotante `position: fixed` que queda por encima de las dos pantallas.
+ * componente vive a nivel de App.tsx, fuera de ambos arboles, como un
+ * renglon propio en flujo normal (no flotante: antes era un chip
+ * `position: fixed` que tapaba el titulo de la galeria y el nombre de
+ * archivo del visor, ambos arriba a la izquierda -- ver PortalVolver.css).
+ *
+ * `position: relative` + z-index alto (no `fixed`): sigue empujando a
+ * `.gallery-page` hacia abajo en el flujo normal del documento (por eso no
+ * hace falta tocar Gallery.css), y a la vez se pinta por encima de
+ * `.viewer-hero`/`.fullscreen-preview`, que SI son `fixed` y por eso no
+ * respetan el flujo. Para que el visor de dibujos (igual de `fixed`) deje el
+ * mismo lugar libre arriba, este componente escribe la altura real en
+ * `--cabecera-embebida-h` (leida por `.viewer-hero`, ver index.css).
  *
  * Deteccion de contexto: preferimos `UnxCentinela.contexto === 'iframe'`
  * (gateway, via Sec-Fetch-Dest); sin centinela (kill switch, o esta pagina
@@ -21,27 +31,62 @@ import './PortalVolver.css';
  */
 export function PortalVolver() {
   const [embebido, setEmbebido] = useState(false);
+  const [version, setVersion] = useState('');
 
   useEffect(() => {
     const c = contexto();
+    let esEmbebido: boolean;
     if (c) {
-      setEmbebido(c === 'iframe');
-      return;
+      esEmbebido = c === 'iframe';
+    } else {
+      try {
+        esEmbebido = window.self !== window.top;
+      } catch {
+        // Un acceso a `window.top` que tira SecurityError solo pasa cuando el
+        // origen del padre es distinto: eso ES estar embebido.
+        esEmbebido = true;
+      }
     }
-    try {
-      setEmbebido(window.self !== window.top);
-    } catch {
-      // Un acceso a `window.top` que tira SecurityError solo pasa cuando el
-      // origen del padre es distinto: eso ES estar embebido.
-      setEmbebido(true);
-    }
+    setEmbebido(esEmbebido);
+    if (!esEmbebido) return;
+
+    document.documentElement.classList.add('con-cabecera-embebida');
+    // La chapita de version ya la inyecta el gateway (W_13_Gateway/lib/
+    // insignia.ts) con el commit real (header x-unx-commit o, en su
+    // defecto, version.txt): se reusa ese texto en vez de pedirlo de nuevo.
+    const sha = document.querySelector('#unx-insignia-version .unx-sha')?.textContent;
+    if (sha && sha !== '?') setVersion(sha);
+
+    return () => {
+      document.documentElement.classList.remove('con-cabecera-embebida');
+    };
   }, []);
 
   if (!embebido) return null;
 
   return (
-    <button type="button" className="portal-volver" onClick={volver} title="Volver al portal">
-      ‹ Volver
-    </button>
+    <PortalVolverBar version={version} />
+  );
+}
+
+function PortalVolverBar({ version }: { version: string }) {
+  // Altura real publicada en --cabecera-embebida-h (index.css) para que
+  // .viewer-hero, que es `fixed` y por eso ignora el flujo normal, deje
+  // exactamente este mismo espacio libre arriba. clientHeight en vez de un
+  // numero fijo: si el contenido crece (ej. una version mas larga en un
+  // telefono angosto) esto no se desincroniza.
+  const medirAltura = (el: HTMLElement | null) => {
+    if (!el) return;
+    document.documentElement.style.setProperty('--cabecera-embebida-h', `${el.offsetHeight}px`);
+  };
+
+  return (
+    <header className="cabecera-embebida" ref={medirAltura}>
+      <button type="button" className="cabecera-embebida-volver" onClick={volver} title="Volver al portal">
+        ‹ Volver
+      </button>
+      <span className="cabecera-embebida-nombre">Concept</span>
+      {version && <span className="cabecera-embebida-version">{version}</span>}
+    </header>
   );
 }
