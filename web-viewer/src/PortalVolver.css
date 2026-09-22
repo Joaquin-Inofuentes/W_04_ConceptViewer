@@ -4,17 +4,16 @@
    `.gallery-page` hacia abajo solo, y `z-index` alto lo mantiene pintado por
    encima de `.viewer-hero`/`.fullscreen-preview`, que sí son `fixed`.
 
-   `margin-top: 24px`: el gateway mete su propia chapita de version en TODAS
-   las apps (W_13_Gateway/lib/insignia.ts), fija en top:0/centrada y con
-   z-index al maximo posible -- nada se pinta por encima de eso. Si este
-   renglon empezara en el borde, la chapita quedaba pintada justo sobre el
-   nombre centrado (los dos se centran en el mismo lugar) y lo tapaba en
-   cuanto el gateway terminaba de resolver el commit. 24px es la altura real
-   de esa chapita, medida en produccion. */
+   Antes llevaba `margin-top: 24px` para dejarle lugar a la chapita de
+   version que el gateway inyectaba en TODAS las apps
+   (W_13_Gateway/lib/insignia.ts): esa chapita se pintaba con z-index al
+   maximo posible justo sobre el nombre centrado (los dos se centran en el
+   mismo lugar) y lo tapaba en cuanto el gateway resolvia el commit. Esa
+   inyeccion se comento en middleware.ts, asi que ya no hace falta el
+   margen. */
 .cabecera-embebida {
   position: relative;
   z-index: 10060;
-  margin-top: 24px;
   width: 100%;
   box-sizing: border-box;
   display: flex;
