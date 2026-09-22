@@ -106,7 +106,7 @@ export function volver(): void {
 
 /** "documento" | "iframe" | null. Sin centinela (kill switch, o esta pagina
  * abierta fuera del gateway) no hay forma confiable de saberlo, asi que cada
- * lugar que la usa decide su propio plan B (ver PortalVolver.tsx: cae a
+ * lugar que la usa decide su propio plan B (por ejemplo, caer a
  * `window.self !== window.top`). */
 export function contexto(): "documento" | "iframe" | null {
   try {

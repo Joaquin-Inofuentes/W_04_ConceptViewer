@@ -2,7 +2,6 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { AnimatePresence, LazyMotion, domAnimation, m } from 'motion/react';
 import { Gallery } from './Gallery/Gallery';
 import { NamePrompt } from './Gallery/NamePrompt';
-import { PortalVolver } from './PortalVolver';
 import { logCerrar } from './Gallery/analytics';
 import { getUserName, setUserName } from './Gallery/userIdentity';
 import { registrarAbierto } from './Gallery/recientes';
@@ -230,7 +229,12 @@ function App() {
     // aca solo se usen fades y springs simples. Con domAnimation el bundle
     // baja ~20 KB gzip, que en 3G es tiempo de arranque real.
     <LazyMotion features={domAnimation} strict>
-      <PortalVolver />
+      {/* Antes iba <PortalVolver /> aca: pintaba un renglon propio "‹ Volver |
+          Concept" cuando la app corria embebida en el iframe del Portal.
+          Duplicaba la barra propia del Portal (Volver/titulo/"Ir a la pagina
+          real"), que ahora queda siempre puesta porque apps.js ya no tiene
+          `cabeceraPropia` para "concept" (ver W_00_Portal/apps.js). Se saco
+          el componente entero: PortalVolver.tsx y PortalVolver.css. */}
       <Gallery
         hidden={!!fileData}
         userName={userName}

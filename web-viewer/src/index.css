@@ -110,17 +110,16 @@ body {
   margin: 0 auto;
 }
 
-/* 0px salvo embebida en el iframe del Portal (PortalVolver.tsx la sube a la
-   altura real de .cabecera-embebida): así el visor de dibujos, que es
-   position:fixed y por eso no lo corre estar despues de la cabecera en el
-   DOM, deja el mismo lugar libre arriba que ya deja la galeria en flujo
-   normal -- sin este var, la cabecera quedaba tapando el nombre de archivo
-   y el boton de cerrar del visor (ambos arriba, ver App.css). */
-:root { --cabecera-embebida-h: 0px; }
-
+/* Antes aca vivia --cabecera-embebida-h, publicada por PortalVolver.tsx para
+   que este visor (fixed, no respeta el flujo normal) dejara lugar arriba
+   para el renglon propio "‹ Volver | Concept". Se saco PortalVolver entero:
+   duplicaba la barra propia del Portal (Volver/titulo/"Ir a la pagina
+   real"), que ahora queda siempre puesta porque apps.js ya no tiene
+   `cabeceraPropia` para "concept". Sin cabecera propia que medir, no hay
+   espacio que reservar: el visor vuelve a empezar en el borde superior. */
 .viewer-hero {
   position: fixed;
-  top: var(--cabecera-embebida-h);
+  top: 0;
   left: 0; right: 0; bottom: 0;
   z-index: 1000;
   background: var(--bg-canvas);
