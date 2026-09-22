@@ -25,12 +25,45 @@ function idDeSesion(): string {
   return sesionId;
 }
 
-async function registrarEvento(evento: "abrir" | "cerrar" | "descargar", campos: Record<string, unknown>) {
+async function registrarEvento(
+  evento: "abrir" | "cerrar" | "descargar" | "buscar" | "tema",
+  campos: Record<string, unknown>
+) {
   await insertEvento({ evento, sesion_id: idDeSesion(), ...campos });
 }
 
 export function logAbrir(archivoId: string, archivoNombre: string, carpetaId: string) {
-  void registrarEvento("abrir", { archivo_id: archivoId, archivo_nombre: archivoNombre, carpeta_id: carpetaId });
+  void registrarEvento("abrir", {
+    archivo_id: archivoId,
+    archivo_nombre: archivoNombre,
+    carpeta_id: carpetaId,
+    exito: true,
+  });
+}
+
+export function logAbrirError(
+  archivoId: string | null,
+  archivoNombre: string | null,
+  carpetaId: string | null,
+  errorCodigo: string,
+  errorMensaje: string
+) {
+  void registrarEvento("abrir", {
+    archivo_id: archivoId,
+    archivo_nombre: archivoNombre,
+    carpeta_id: carpetaId,
+    exito: false,
+    error_codigo: errorCodigo,
+    error_mensaje: errorMensaje,
+  });
+}
+
+export function logBuscar(query: string, resultados: number) {
+  void registrarEvento("buscar", { query, resultados });
+}
+
+export function logTema(tema: "claro" | "oscuro", origen: "galeria" | "lienzo") {
+  void registrarEvento("tema", { tema, origen });
 }
 
 export function logCerrar(archivoId: string | null, archivoNombre: string | null) {

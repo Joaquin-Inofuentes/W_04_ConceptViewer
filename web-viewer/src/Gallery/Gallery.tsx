@@ -15,7 +15,7 @@ import { thumbnailDeArchivo } from "./thumbnail";
 import { renderDocumentEntry, exportSectionsAsPdf, exportSectionsAsZip } from "./exportRender";
 import type { ExportSection } from "./exportRender";
 import { gatherExportMetadata } from "./exportMetadata";
-import { logAbrir, logDescarga } from "./analytics";
+import { logDescarga, logBuscar, logTema } from "./analytics";
 import { openConceptsRemote, parseConceptsRemote } from "../VisorConcept/parser";
 import { DRIVE_FOLDER_ID } from "../config";
 import { aSlug } from "../rutas";
@@ -92,8 +92,14 @@ const LIMITE_RESULTADOS_BUSQUEDA = 30;
  * usuarios), asi que buscar ahi es gratis -- no hace falta pegarle a Drive ni
  * restringir la busqueda a donde la persona esta parada.
  */
+/** Saca acentos/diacriticos y pasa a minusculas, para que "iluminacion"
+ * encuentre "ILUMINACIÓN" y viceversa. */
+function normalizar(s: string): string {
+  return s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+}
+
 function buscarEnArbol(arbol: Map<string, FolderCacheRow>, query: string): ResultadoBusqueda[] {
-  const q = query.trim().toLowerCase();
+  const q = normalizar(query.trim());
   if (!q) return [];
   const padre = new Map<string, string>();
   arbol.forEach((fila) => fila.subfolders.forEach((sub) => padre.set(sub.id, fila.folder_id)));
@@ -101,7 +107,7 @@ function buscarEnArbol(arbol: Map<string, FolderCacheRow>, query: string): Resul
   for (const fila of arbol.values()) {
     for (const archivo of fila.files) {
       const nombre = cleanName(archivo.name);
-      if (!nombre.toLowerCase().includes(q)) continue;
+      if (!normalizar(nombre).includes(q)) continue;
       const ruta: string[] = [];
       let actual: string | undefined = fila.folder_id;
       while (actual && padre.has(actual)) {
@@ -305,6 +311,18 @@ export function Gallery({ hidden, onOpen, onUpload, rutaInicial, onRutaCambio, o
   useEffect(() => {
     foldersRef.current = folders;
   }, [folders]);
+
+  // Se loguea la busqueda recien cuando la persona deja de tipear (no en
+  // cada tecla): sin el debounce, buscar "iluminacion" son 12 eventos en vez
+  // de uno solo.
+  useEffect(() => {
+    const q = busqueda.trim();
+    if (!q) return;
+    const id = window.setTimeout(() => {
+      logBuscar(q, buscarEnArbol(folderTreeCacheRef.current, q).length);
+    }, 600);
+    return () => window.clearTimeout(id);
+  }, [busqueda]);
 
   const showToast = (message: string) => {
     setToast(message);
@@ -563,10 +581,6 @@ export function Gallery({ hidden, onOpen, onUpload, rutaInicial, onRutaCambio, o
       const archivos = folderTreeCacheRef.current.get(destino.id)?.files || [];
       const archivo = archivos.find((f) => aSlug(f.name) === resto[0]);
       if (archivo) {
-        // Mismo evento que un click en la tarjeta (`handleOpen`): sin esto,
-        // abrir por un link compartido/directo — que es exactamente para lo
-        // que existe esta ruta — quedaba invisible en las metricas de uso.
-        logAbrir(archivo.id, archivo.name, destino.id);
         // Misma invalidacion (esperada) que `handleOpen`: este camino la
         // saltaba por completo, asi que abrir por link directo un archivo
         // re-subido con contenido distinto mostraba el rasterizado viejo
@@ -619,7 +633,6 @@ export function Gallery({ hidden, onOpen, onUpload, rutaInicial, onRutaCambio, o
   // identidad NUEVA en cada render invalidaria la memoizacion igual.
   const handleOpen = useCallback(async (item: GalleryItem, originRect: DOMRect | null) => {
     if (item.status === "processing") return;
-    logAbrir(item.id, item.name, currentFolder.id);
     // Si el modifiedAt de Drive cambio desde la ultima vez que se abrio este
     // archivo EN ESTE DISPOSITIVO, el rasterizado que pueda haber cacheado en
     // IndexedDB corresponde al contenido viejo (el cache es por fileId, sin
@@ -641,7 +654,11 @@ export function Gallery({ hidden, onOpen, onUpload, rutaInicial, onRutaCambio, o
   }, [currentFolder.id, folderStack, onOpen]);
 
   // --- Tema, recientes y restablecer ------------------------------------
-  const cambiarTema = () => setTema(alternarTema());
+  const cambiarTema = () => {
+    const nuevo = alternarTema();
+    setTema(nuevo);
+    logTema(nuevo, "galeria");
+  };
 
   useEffect(() => {
     void listarRecientes(3).then(setRecientes);

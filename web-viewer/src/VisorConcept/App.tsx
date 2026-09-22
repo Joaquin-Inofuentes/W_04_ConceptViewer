@@ -6,7 +6,7 @@ import type { EstadoProgreso } from './progreso';
 import { Viewer } from './Viewer';
 import type { LayerConfig, ViewerHandle } from './Viewer';
 import { InteractivePreview } from './InteractivePreview';
-import { logDescarga } from '../Gallery/analytics';
+import { logDescarga, logAbrir, logAbrirError, logTema } from '../Gallery/analytics';
 import { driveFileUrl, driveAuthHeaders } from '../Gallery/driveClient';
 import type { FileSourceRef } from '../App';
 import {
@@ -324,7 +324,11 @@ export function ConceptViewer({ source, onClose }: ViewerProps) {
   // ya escucha el evento "concepts:tema" (ver Viewer.tsx) para repintar el
   // lienzo, asi que alcanza con alternarlo aca igual que hace la galeria.
   const [tema, setTema] = useState<Tema>(() => temaGuardado());
-  const alternarTemaViewer = useCallback(() => setTema(alternarTema()), []);
+  const alternarTemaViewer = useCallback(() => {
+    const nuevo = alternarTema();
+    setTema(nuevo);
+    logTema(nuevo, 'lienzo');
+  }, []);
 
   // Fullscreen real del navegador (distinto de "ver todo el dibujo": ese
   // encuadra el CONTENIDO, este oculta la barra del navegador). Se escucha
@@ -599,6 +603,13 @@ export function ConceptViewer({ source, onClose }: ViewerProps) {
         ...(delProxy?.causa ? { causa: delProxy.causa } : {}),
         ...(delProxy?.idFallo ? { idFallo: delProxy.idFallo } : {}),
       });
+      logAbrirError(
+        source.kind === 'remote' ? source.fileId : null,
+        fileName,
+        null,
+        codigo,
+        mensaje
+      );
     };
 
     const seguidor = new SeguidorProgreso((e) => {
@@ -682,6 +693,7 @@ export function ConceptViewer({ source, onClose }: ViewerProps) {
         setIsolatedLayer(null);
         setStats({ layers: parsedDoc.layers.length, strokes: strokesCount, images: imagesCount });
         setDoc(parsedDoc);
+        logAbrir(source.kind === 'remote' ? source.fileId : '', fileName, '');
         seguidor.cambiarFase(
           parsedDoc.resourceIds.length > 0 ? 'descargando' : 'listo',
           parsedDoc.resourceIds.length > 0 ? `0 de ${parsedDoc.resourceIds.length} imágenes` : null
@@ -928,32 +940,6 @@ export function ConceptViewer({ source, onClose }: ViewerProps) {
           <ZoomOut size={20} />
         </button>
 
-        {/* Solo tiene sentido con mas de un plano colocado: con uno solo
-            "siguiente" volveria al mismo (indice circular). */}
-        {stats.images > 1 && (
-          <>
-            <button
-              className="btn-tool"
-              onClick={() => irAPlano(-1)}
-              title="Plano anterior ([)"
-              aria-label="Plano anterior"
-            >
-              <ChevronLeft size={20} />
-            </button>
-            <span className="plano-indicador" aria-live="polite">
-              {planoActual + 1}/{stats.images}
-            </span>
-            <button
-              className="btn-tool"
-              onClick={() => irAPlano(1)}
-              title="Plano siguiente (])"
-              aria-label="Plano siguiente"
-            >
-              <ChevronRight size={20} />
-            </button>
-          </>
-        )}
-
         <button
           className="btn-tool"
           onClick={alternarFullscreen}
@@ -1074,6 +1060,33 @@ export function ConceptViewer({ source, onClose }: ViewerProps) {
           onOpenPhoto={abrirFoto}
         />
       </div>
+
+      {/* Navegacion entre planos: barra propia, separada del stack vertical
+          de herramientas (antes vivia ahi adentro y era parte de por que
+          esa columna se quedaba sin lugar en pantalla). */}
+      {stats.images > 1 && (
+        <div className="plano-nav-bar">
+          <button
+            className="plano-nav-btn"
+            onClick={() => irAPlano(-1)}
+            title="Plano anterior ([)"
+            aria-label="Plano anterior"
+          >
+            <ChevronLeft size={18} />
+          </button>
+          <span className="plano-nav-indicador" aria-live="polite">
+            {planoActual + 1}/{stats.images}
+          </span>
+          <button
+            className="plano-nav-btn"
+            onClick={() => irAPlano(1)}
+            title="Plano siguiente (])"
+            aria-label="Plano siguiente"
+          >
+            <ChevronRight size={18} />
+          </button>
+        </div>
+      )}
 
       <main className="main-content">
         <div className="canvas-wrapper">

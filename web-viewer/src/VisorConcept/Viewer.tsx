@@ -314,6 +314,39 @@ interface CachedText {
 type CachedItem = CachedStroke | CachedImage | CachedText;
 
 /**
+ * Orden de lectura (izquierda->derecha, arriba->abajo) de una lista de cajas.
+ *
+ * Agrupa en filas por superposicion vertical (no exige alineacion perfecta:
+ * dos planos de alturas distintas quedan en la misma fila si sus rangos Y se
+ * tocan) y dentro de cada fila ordena por X. `minY`/`maxY` ya estan en
+ * espacio de CANVAS (Y crece hacia abajo: `aCanvasTransform` en parser.ts
+ * invierte el Y-arriba del documento al parsear), asi que Y ascendente es
+ * directamente arriba->abajo. Antes `cantidadPlanos`/`irAPlano` navegaban en
+ * el orden en que Concepts guardo cada plano en el archivo, que no tiene
+ * ninguna relacion con donde quedaron colocados en el lienzo.
+ */
+function ordenDeLectura<T extends { minX: number; minY: number; maxX: number; maxY: number }>(cajas: T[]): T[] {
+  const ordenadasPorY = [...cajas].sort((a, b) => a.minY - b.minY);
+  const filas: T[][] = [];
+  let filaMaxY = -Infinity;
+  for (const c of ordenadasPorY) {
+    if (filas.length > 0 && c.minY < filaMaxY) {
+      filas[filas.length - 1].push(c);
+      if (c.maxY > filaMaxY) filaMaxY = c.maxY;
+    } else {
+      filas.push([c]);
+      filaMaxY = c.maxY;
+    }
+  }
+  const resultado: T[] = [];
+  for (const fila of filas) {
+    fila.sort((a, b) => a.minX - b.minX);
+    resultado.push(...fila);
+  }
+  return resultado;
+}
+
+/**
  * Arma el Path2D de un trazo salteando puntos que estan a menos de
  * `tolerancia` unidades del ultimo punto conservado. Los trazos de Concepts
  * vienen sobremuestreados (puntos separados por decimas de unidad), asi que
@@ -786,23 +819,31 @@ const ViewerBase = forwardRef<ViewerHandle, ViewerProps>(({ doc, fileId, layerCo
   // Lo que necesita del documento lo lee de refs, que siempre estan al dia.
   const docRef = useRef(doc);
   const docCacheRef = useRef(docCache);
+  // Los planos, en orden de lectura (no en el orden en que Concepts los
+  // guardo). Se recalcula solo cuando cambia `docCache` (abrir un dibujo
+  // nuevo), no en cada render: con decenas de planos, ordenar por fila en
+  // cada frame seria trabajo tirado.
+  const planosOrdenados = useMemo(
+    () => (docCache ? ordenDeLectura(docCache.items.filter((i): i is CachedImage => i.kind === "image")) : []),
+    [docCache]
+  );
+  const planosOrdenadosRef = useRef(planosOrdenados);
   useEffect(() => {
     docRef.current = doc;
     docCacheRef.current = docCache;
-  }, [doc, docCache]);
+    planosOrdenadosRef.current = planosOrdenados;
+  }, [doc, docCache, planosOrdenados]);
 
   useImperativeHandle(ref, () => ({
     getStats: () => ({ ...statsRef.current }),
     zoomAll: () => fitToBoundsRef.current(),
     zoomIn: () => zoomStepRef.current(1),
     zoomOut: () => zoomStepRef.current(-1),
-    cantidadPlanos: () => (docCacheRef.current?.items.filter((i) => i.kind === "image").length ?? 0),
+    cantidadPlanos: () => planosOrdenadosRef.current.length,
     irAPlano: (indice: number) => {
-      const dc = docCacheRef.current;
       const rect = containerRef.current?.getBoundingClientRect();
-      if (!dc || !rect || rect.width === 0 || rect.height === 0) return;
-      const imagenes = dc.items.filter((i) => i.kind === "image");
-      const item = imagenes[indice];
+      if (!rect || rect.width === 0 || rect.height === 0) return;
+      const item = planosOrdenadosRef.current[indice];
       if (!item) return;
       const w = item.maxX - item.minX;
       const h = item.maxY - item.minY;

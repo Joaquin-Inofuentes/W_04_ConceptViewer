@@ -94,8 +94,20 @@ body {
      el indicador de home de iOS o la barra de gestos de Android. */
   bottom: calc(20px + env(safe-area-inset-bottom));
   right: calc(20px + env(safe-area-inset-right));
+  /* `top` fijo (en vez de solo `bottom`) le da a la columna una altura
+     ACOTADA por el navegador -- ya no hace falta calcularla a mano ni
+     recortar contenido con overflow (eso rompia los menues desplegables,
+     que se dibujan por FUERA de esta caja). Deja lugar de sobra para el
+     boton de cerrar: antes, con muchos botones (mas de un plano colocado,
+     enlace copiable, etc.) la columna podia crecer hasta pisarlo. */
+  top: calc(60px + env(safe-area-inset-top));
   display: flex;
   flex-direction: column;
+  /* Si la columna no entra en el alto disponible, se abre una SEGUNDA
+     columna hacia la izquierda (no hacia la derecha, que se saldria de
+     pantalla) en vez de cortar botones fuera de la vista. */
+  flex-wrap: wrap-reverse;
+  align-content: flex-start;
   gap: 10px;
   z-index: 50;
 }
@@ -156,12 +168,46 @@ body {
   margin-bottom: 0.5rem;
 }
 
-.plano-indicador {
-  font-size: 0.7rem;
+/* Navegacion entre planos: un rectangulo horizontal simple, centrado y fijo
+   abajo de todo -- separado del stack vertical de herramientas para que no
+   compita con ese espacio ni dependa de cuantos otros botones haya. */
+.plano-nav-bar {
+  position: absolute;
+  left: 50%;
+  bottom: calc(20px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-elevado);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  box-shadow: var(--sombra);
+  padding: 4px;
+  z-index: 50;
+}
+.plano-nav-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-main);
+  width: 34px;
+  height: 34px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+.plano-nav-btn:hover {
+  background: var(--bg-color);
+}
+.plano-nav-indicador {
+  font-size: 0.75rem;
   color: var(--text-main);
   opacity: 0.75;
   text-align: center;
-  padding: 2px 0;
+  min-width: 3.2em;
   user-select: none;
 }
 
