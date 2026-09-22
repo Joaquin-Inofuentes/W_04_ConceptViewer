@@ -3,9 +3,12 @@ import { contexto, volver } from './lib/centinela';
 import './PortalVolver.css';
 
 /**
- * Renglon delgado "‹ Volver | Concept | <version>", visible SOLO cuando esta
- * app corre embebida en el iframe del Portal (babelbim.com/#concept). Fuera
- * de ahi (dominio de Vercel directo) no existe: no hay a donde volver.
+ * Renglon delgado "‹ Volver | Concept", visible SOLO cuando esta app corre
+ * embebida en el iframe del Portal (babelbim.com/#concept). Fuera de ahi
+ * (dominio de Vercel directo) no existe: no hay a donde volver. Sin version:
+ * ya la muestra la chapita del gateway (insignia.ts) en todas las apps, y
+ * mostrarla dos veces -- ademas de redundante -- competia por el mismo
+ * lugar (ver el `margin-top` en PortalVolver.css).
  *
  * A diferencia de W_14_Admin (que lo pinta dentro de su propia `.cabecera`
  * sticky), esta app no tiene una barra de titulo compartida entre la galeria
@@ -31,7 +34,6 @@ import './PortalVolver.css';
  */
 export function PortalVolver() {
   const [embebido, setEmbebido] = useState(false);
-  const [version, setVersion] = useState('');
 
   useEffect(() => {
     const c = contexto();
@@ -51,12 +53,6 @@ export function PortalVolver() {
     if (!esEmbebido) return;
 
     document.documentElement.classList.add('con-cabecera-embebida');
-    // La chapita de version ya la inyecta el gateway (W_13_Gateway/lib/
-    // insignia.ts) con el commit real (header x-unx-commit o, en su
-    // defecto, version.txt): se reusa ese texto en vez de pedirlo de nuevo.
-    const sha = document.querySelector('#unx-insignia-version .unx-sha')?.textContent;
-    if (sha && sha !== '?') setVersion(sha);
-
     return () => {
       document.documentElement.classList.remove('con-cabecera-embebida');
     };
@@ -65,19 +61,22 @@ export function PortalVolver() {
   if (!embebido) return null;
 
   return (
-    <PortalVolverBar version={version} />
+    <PortalVolverBar />
   );
 }
 
-function PortalVolverBar({ version }: { version: string }) {
-  // Altura real publicada en --cabecera-embebida-h (index.css) para que
-  // .viewer-hero, que es `fixed` y por eso ignora el flujo normal, deje
-  // exactamente este mismo espacio libre arriba. clientHeight en vez de un
-  // numero fijo: si el contenido crece (ej. una version mas larga en un
-  // telefono angosto) esto no se desincroniza.
+function PortalVolverBar() {
+  // Distancia real hasta el borde inferior publicada en --cabecera-embebida-h
+  // (index.css) para que .viewer-hero, que es `fixed` y por eso ignora el
+  // flujo normal, deje exactamente ese mismo espacio libre arriba.
+  // getBoundingClientRect().bottom (no offsetHeight): este renglon es el
+  // primer elemento de la pagina y lleva `margin-top` para no quedar bajo la
+  // chapita de version del gateway (ver PortalVolver.css) -- offsetHeight
+  // ignora ese margen y el visor de dibujos quedaria empezando mas arriba de
+  // lo que el renglon en verdad ocupa.
   const medirAltura = (el: HTMLElement | null) => {
     if (!el) return;
-    document.documentElement.style.setProperty('--cabecera-embebida-h', `${el.offsetHeight}px`);
+    document.documentElement.style.setProperty('--cabecera-embebida-h', `${el.getBoundingClientRect().bottom}px`);
   };
 
   return (
@@ -86,7 +85,6 @@ function PortalVolverBar({ version }: { version: string }) {
         ‹ Volver
       </button>
       <span className="cabecera-embebida-nombre">Concept</span>
-      {version && <span className="cabecera-embebida-version">{version}</span>}
     </header>
   );
 }

@@ -2,10 +2,19 @@
    comentario en PortalVolver.tsx sobre por que antes tapaba contenido).
    `position: relative` (no `fixed`): sigue en el flujo, así que empuja a
    `.gallery-page` hacia abajo solo, y `z-index` alto lo mantiene pintado por
-   encima de `.viewer-hero`/`.fullscreen-preview`, que sí son `fixed`. */
+   encima de `.viewer-hero`/`.fullscreen-preview`, que sí son `fixed`.
+
+   `margin-top: 24px`: el gateway mete su propia chapita de version en TODAS
+   las apps (W_13_Gateway/lib/insignia.ts), fija en top:0/centrada y con
+   z-index al maximo posible -- nada se pinta por encima de eso. Si este
+   renglon empezara en el borde, la chapita quedaba pintada justo sobre el
+   nombre centrado (los dos se centran en el mismo lugar) y lo tapaba en
+   cuanto el gateway terminaba de resolver el commit. 24px es la altura real
+   de esa chapita, medida en produccion. */
 .cabecera-embebida {
   position: relative;
   z-index: 10060;
+  margin-top: 24px;
   width: 100%;
   box-sizing: border-box;
   display: flex;
@@ -45,12 +54,4 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.cabecera-embebida-version {
-  flex-shrink: 0;
-  font-size: 11px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  color: var(--text-main);
-  opacity: 0.45;
 }
