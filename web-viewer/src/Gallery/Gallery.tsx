@@ -5,7 +5,8 @@ import {
   FileText, Image as ImageIcon, FolderOpen, Folder, Home, ChevronLeft, ChevronRight,
   Sun, Moon, Trash2, Clock, Search,
 } from "lucide-react";
-import { listDriveFolder, driveFileUrl, driveAuthHeaders } from "./driveClient";
+import { listDriveFolder } from "./driveClient";
+import { conRespaldoDrive } from "./transporte";
 import type { DriveFolderRef, DriveListing } from "./driveClient";
 import {
   fetchCachedThumbnails, upsertThumbnail, fetchAllFolderCache, upsertFolderCache, cacheDeCarpetaVencido,
@@ -340,14 +341,14 @@ export function Gallery({ hidden, onOpen, onUpload, rutaInicial, onRutaCambio, o
       // segundos (cada PDF embebido tarda ~1,5 s en pdf.js aunque la salida
       // sea de 32 px) y ademas obligaba a bajar el archivo entero: 262 MB
       // para producir una imagen de 192 px. Ahora son ~110 KB.
-      const archivo = await openConceptsRemote(driveFileUrl(file.id), driveAuthHeaders());
-      let thumbnail: string;
-      let bytesFuente: number;
-      try {
-        ({ dataUrl: thumbnail, bytesFuente } = await thumbnailDeArchivo(archivo));
-      } finally {
-        archivo.close();
-      }
+      const { dataUrl: thumbnail, bytesFuente } = await conRespaldoDrive(file.id, async (fuente) => {
+        const archivo = await openConceptsRemote(fuente.url, fuente.headers, { directa: fuente.directa });
+        try {
+          return await thumbnailDeArchivo(archivo);
+        } finally {
+          archivo.close();
+        }
+      });
       setItems((prev) =>
         prev.map((it) =>
           it.id === file.id ? { ...it, thumbnail, status: "ready", fromCache: false } : it
@@ -806,12 +807,14 @@ export function Gallery({ hidden, onOpen, onUpload, rutaInicial, onRutaCambio, o
           // Secuencial y codificando a JPEG apenas se renderiza: mantener
           // varios canvases de export vivos a la vez son cientos de MB.
           // renderDocumentEntry libera el canvas antes de seguir.
-          const doc = await parseConceptsRemote(driveFileUrl(f.id), driveAuthHeaders());
-          try {
-            entries.push(await renderDocumentEntry(doc, f.name));
-          } finally {
-            doc.close();
-          }
+          await conRespaldoDrive(f.id, async (fuente) => {
+            const doc = await parseConceptsRemote(fuente.url, fuente.headers, { directa: fuente.directa });
+            try {
+              entries.push(await renderDocumentEntry(doc, f.name));
+            } finally {
+              doc.close();
+            }
+          });
           setExportProgress((prev) => (prev ? { ...prev, done: prev.done + 1 } : prev));
         }
         sections.push({ title: group.title, entries });

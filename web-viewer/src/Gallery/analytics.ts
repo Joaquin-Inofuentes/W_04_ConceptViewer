@@ -32,12 +32,21 @@ async function registrarEvento(
   await insertEvento({ evento, sesion_id: idDeSesion(), ...campos });
 }
 
-export function logAbrir(archivoId: string, archivoNombre: string, carpetaId: string) {
+/** De donde salieron los bytes y cuanto se tardo: sin esto no se puede saber en
+ * produccion si el tunel esta ayudando o si todo cae a Drive. */
+export interface DatosTransporte {
+  transporte?: "tunel" | "drive" | "local" | null;
+  transporte_motivo?: string | null;
+  ms_apertura?: number;
+}
+
+export function logAbrir(archivoId: string, archivoNombre: string, carpetaId: string, transporte: DatosTransporte = {}) {
   void registrarEvento("abrir", {
     archivo_id: archivoId,
     archivo_nombre: archivoNombre,
     carpeta_id: carpetaId,
     exito: true,
+    ...transporte,
   });
 }
 
@@ -46,7 +55,8 @@ export function logAbrirError(
   archivoNombre: string | null,
   carpetaId: string | null,
   errorCodigo: string,
-  errorMensaje: string
+  errorMensaje: string,
+  transporte: DatosTransporte = {}
 ) {
   void registrarEvento("abrir", {
     archivo_id: archivoId,
@@ -55,6 +65,7 @@ export function logAbrirError(
     exito: false,
     error_codigo: errorCodigo,
     error_mensaje: errorMensaje,
+    ...transporte,
   });
 }
 

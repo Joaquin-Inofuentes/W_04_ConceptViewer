@@ -1,6 +1,6 @@
 import { decode, ExtensionCodec } from "@msgpack/msgpack";
 import { ZipArchive, BufferSource, FileSource, RemoteSource } from "./zip";
-import type { ZipSource } from "./zip";
+import type { ZipSource, FuenteDirecta } from "./zip";
 import { getBudgets } from "../device";
 
 export interface BBox {
@@ -613,12 +613,16 @@ export interface ConceptsFile {
   parse(): Promise<Document>;
   close(): void;
   totalBytes: number;
+  /** De donde se estan leyendo los bytes ahora (puede pasar de tunel a drive
+   * a mitad de lectura si el tunel se cae). */
+  origen(): "tunel" | "drive" | "local";
 }
 
 export async function openConceptsSource(fuente: ZipSource): Promise<ConceptsFile> {
   const zip = await ZipArchive.open(fuente);
   return {
     totalBytes: fuente.size,
+    origen: () => (fuente instanceof RemoteSource ? fuente.origen : "local"),
     async thumbnail() {
       const nombre = zip.names().find((n) => /(^|\/)thumb\.jpe?g$/i.test(n));
       // Esto SI es "no hay vista previa": no hay entrada `thumb.jpg` en el
@@ -656,9 +660,10 @@ export async function openConceptsSource(fuente: ZipSource): Promise<ConceptsFil
 export async function openConceptsRemote(
   url: string,
   headers: Record<string, string> = {},
-  opts: ParseOptions & { size?: number } = {}
+  opts: ParseOptions & { size?: number; directa?: FuenteDirecta } = {}
 ): Promise<ConceptsFile> {
   const source = await RemoteSource.open(url, headers, {
+    directa: opts.directa,
     size: opts.size,
     signal: opts.signal,
     onBytes: opts.onBytes,
@@ -689,9 +694,10 @@ export async function parseConceptsLocalFile(file: File): Promise<Document> {
 export async function parseConceptsRemote(
   url: string,
   headers: Record<string, string> = {},
-  opts: ParseOptions & { size?: number } = {}
+  opts: ParseOptions & { size?: number; directa?: FuenteDirecta } = {}
 ): Promise<Document> {
   const source = await RemoteSource.open(url, headers, {
+    directa: opts.directa,
     size: opts.size,
     signal: opts.signal,
     onBytes: opts.onBytes,

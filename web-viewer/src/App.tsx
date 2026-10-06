@@ -11,6 +11,7 @@ import { applyTierFromUrl } from './device';
 import { temaGuardado, aplicarTema } from './theme';
 import { construirRuta, leerRuta, irA, aSlug } from './rutas';
 import { fase, listo } from './lib/centinela';
+import { iniciarSondeo } from './Gallery/transporte';
 import './index.css';
 
 // El visor (parser + zip + pdf.js + jspdf) se carga recien cuando se abre un
@@ -43,6 +44,9 @@ aplicarTema(temaGuardado());
 // el momento mas temprano posible), y un useEffect corre un tick despues del
 // primer render, que para "el bundle ya esta" es tarde de mas.
 fase('bundle');
+// Sondeo del tunel al nodo: una vez por carga de pagina, sin bloquear nada (la
+// galeria sigue cargando de Drive mientras tanto; ver Gallery/transporte.ts).
+void iniciarSondeo();
 
 function App() {
   const [fileData, setFileData] = useState<FileSourceRef | null>(null);

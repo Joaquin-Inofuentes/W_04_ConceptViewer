@@ -7,7 +7,8 @@ import { Viewer } from './Viewer';
 import type { LayerConfig, ViewerHandle } from './Viewer';
 import { InteractivePreview } from './InteractivePreview';
 import { logDescarga, logAbrir, logAbrirError, logTema } from '../Gallery/analytics';
-import { driveFileUrl, driveAuthHeaders } from '../Gallery/driveClient';
+import { fuenteParaArchivo, fuenteDeDrive } from '../Gallery/transporte';
+import type { FuenteLista } from '../Gallery/transporte';
 import type { FileSourceRef } from '../App';
 import {
   Eye, EyeOff, Lock, Filter, Image as ImageIcon, X, Download, Maximize2,
@@ -573,6 +574,8 @@ export function ConceptViewer({ source, onClose }: ViewerProps) {
     // Supabase: sin ese id, una fila de `unx_fallos` y el log del backend no
     // se pueden cruzar. `fileId` solo si el origen es remoto: un archivo
     // local no tiene nada que ver con el proxy.
+    // Objeto y no variable: se asigna dentro de una funcion y TS la daria por `null`.
+    const fuenteUsada: { actual: FuenteLista | null } = { actual: null };
     const reportarFalloDescarga = (err: unknown) => {
       const codigo = codigoDeErrorDescarga(err);
       setErrorCodigo(codigo);
@@ -592,7 +595,8 @@ export function ConceptViewer({ source, onClose }: ViewerProps) {
         fileName,
         null,
         codigo,
-        mensaje
+        mensaje,
+        { transporte: fuenteUsada.actual?.origen ?? null, transporte_motivo: fuenteUsada.actual?.motivo ?? null }
       );
     };
 
@@ -608,13 +612,32 @@ export function ConceptViewer({ source, onClose }: ViewerProps) {
       // lectura del indice del zip, que a traves del proxy de Drive es una
       // ida y vuelta de ~1,7 s.
       let archivo: Awaited<ReturnType<typeof openConceptsRemote>>;
+      // De donde salen los bytes: el tunel al nodo si esta sano, Drive si no
+      // (ver Gallery/transporte.ts). Se mide desde aca hasta que el dibujo
+      // esta listo, que es lo que la persona espera.
+      const tAbrir = performance.now();
+      const abrirRemoto = async (conTunel: boolean) => {
+        if (source.kind !== 'remote') throw new Error('no es remoto');
+        const f = conTunel ? await fuenteParaArchivo(source.fileId) : fuenteDeDrive(source.fileId, 'respaldo-lectura');
+        fuenteUsada.actual = f;
+        return openConceptsRemote(f.url, f.headers, {
+          directa: f.directa,
+          onBytes: (n) => seguidor.sumarBytes(n),
+        });
+      };
       try {
-        archivo =
-          source.kind === 'remote'
-            ? await openConceptsRemote(driveFileUrl(source.fileId), driveAuthHeaders(), {
-                onBytes: (n) => seguidor.sumarBytes(n),
-              })
-            : await openConceptsLocal(source.file);
+        if (source.kind === 'remote') {
+          try {
+            archivo = await abrirRemoto(true);
+          } catch (e) {
+            // El tunel pudo dar un zip ilegible (copia a medio sincronizar): el
+            // dibujo se abre igual, de Drive. Un error de Drive no se reintenta.
+            if (cancelado || fuenteUsada.actual?.origen !== 'tunel') throw e;
+            archivo = await abrirRemoto(false);
+          }
+        } else {
+          archivo = await openConceptsLocal(source.file);
+        }
       } catch (err: any) {
         if (!cancelado) {
           setError(err?.message || 'No se pudo abrir el archivo');
@@ -636,7 +659,18 @@ export function ConceptViewer({ source, onClose }: ViewerProps) {
       // muerto sumado en serie por nada. Se piden los dos A LA VEZ y cada uno
       // actualiza la UI en cuanto el suyo llega, sin esperar al otro.
       seguidor.cambiarFase('descargando', 'vista previa y documento');
-      const [resThumb, resDoc] = await Promise.allSettled([archivo.thumbnail(), archivo.parse()]);
+      let [resThumb, resDoc] = await Promise.allSettled([archivo.thumbnail(), archivo.parse()]);
+      // Misma red de seguridad que al abrir: un tree.pack ilegible que vino del
+      // tunel (archivo a medio escribir en el nodo) se vuelve a leer de Drive.
+      if (resDoc.status === 'rejected' && source.kind === 'remote' && archivo.origen() === 'tunel' && !cancelado) {
+        archivo.close();
+        try {
+          archivo = await abrirRemoto(false);
+          [resThumb, resDoc] = await Promise.allSettled([archivo.thumbnail(), archivo.parse()]);
+        } catch (e) {
+          resDoc = { status: 'rejected', reason: e };
+        }
+      }
 
       if (resThumb.status === 'fulfilled' && resThumb.value && !cancelado) {
         urlPlaceholder = URL.createObjectURL(resThumb.value);
@@ -677,7 +711,11 @@ export function ConceptViewer({ source, onClose }: ViewerProps) {
         setIsolatedLayer(null);
         setStats({ layers: parsedDoc.layers.length, strokes: strokesCount, images: imagesCount });
         setDoc(parsedDoc);
-        logAbrir(source.kind === 'remote' ? source.fileId : '', fileName, '');
+        logAbrir(source.kind === 'remote' ? source.fileId : '', fileName, '', {
+          transporte: archivo.origen(),
+          transporte_motivo: fuenteUsada.actual?.motivo ?? null,
+          ms_apertura: Math.round(performance.now() - tAbrir),
+        });
         seguidor.cambiarFase(
           parsedDoc.resourceIds.length > 0 ? 'descargando' : 'listo',
           parsedDoc.resourceIds.length > 0 ? `0 de ${parsedDoc.resourceIds.length} imágenes` : null

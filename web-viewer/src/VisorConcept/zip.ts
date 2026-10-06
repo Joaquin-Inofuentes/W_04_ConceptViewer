@@ -79,7 +79,12 @@ export class ErrorProxyConcepts extends Error {
   /** Reintentar no lo va a arreglar: el archivo no esta, el pedido era
    * invalido, o el servidor ya dijo que no sabe servir rangos. */
   get esDefinitivo(): boolean {
-    if (this.causa === "drive-404" || this.causa === "pedido-invalido" || this.causa === "drive-sin-rangos") {
+    if (
+      this.causa === "drive-404" ||
+      this.causa === "pedido-invalido" ||
+      this.causa === "drive-sin-rangos" ||
+      this.causa === "directo-sin-rangos"
+    ) {
       return true;
     }
     // Sin causa (una respuesta vieja o de otro intermediario): cualquier 4xx
@@ -185,7 +190,27 @@ export class FileSource implements ZipSource {
   }
 }
 
+/**
+ * Lectura DIRECTA contra el nodo (tunel de Cloudflare), sin el proxy de Drive.
+ *
+ * Difiere del camino de Drive en lo que el tunel NO hace por CORS (medido
+ * contra el nodo real): no deja pasar el preflight de `Range` ni expone
+ * `Content-Range`. Por eso aca solo se piden rangos `bytes=a-b` (los que el
+ * navegador manda sin preflight) y el tamaño viene firmado de antemano.
+ */
+export interface FuenteDirecta {
+  size: number;
+  /** Pide un permiso nuevo (vencen a los 10 min). `null` si ya no sirve. */
+  renovar?: () => Promise<{ url: string; size: number } | null>;
+  /** A donde conmutar si el tunel falla a mitad de lectura. */
+  alternativa?: { url: string; headers: Record<string, string> };
+  /** Avisa que se dejo el tunel por Drive, y por que. */
+  onConmutar?: (motivo: string) => void;
+}
+
 export interface RemoteSourceOptions {
+  /** Lectura directa contra el nodo; si falta, se lee via el proxy de Drive. */
+  directa?: FuenteDirecta;
   /** Bytes totales, si ya se conocen (evita una request de sondeo). */
   size?: number;
   signal?: AbortSignal;
@@ -236,6 +261,16 @@ export class RemoteSource implements ZipSource {
 
   private url: string;
   private headers: Record<string, string>;
+  private directa: FuenteDirecta | null = null;
+  private modo: "drive" | "directo" = "drive";
+  /** Renovaciones de permiso ya gastadas: un tope evita un bucle si el nodo
+   * rechaza TODOS los permisos que firma. */
+  private renovaciones = 0;
+
+  /** De donde salen los bytes AHORA (cambia si el tunel se cae a mitad). */
+  get origen(): "tunel" | "drive" {
+    return this.modo === "directo" ? "tunel" : "drive";
+  }
   /** URL directa de Drive que devolvio el proxy la primera vez. Reenviarla
    * evita que el proxy tenga que re-resolver el interstitial en cada rango. */
   private urlResuelta: string | null = null;
@@ -254,6 +289,11 @@ export class RemoteSource implements ZipSource {
     s.signal = opts.signal;
     s.onBytes = opts.onBytes;
     if (opts.size) s.size = opts.size;
+    if (opts.directa) {
+      s.directa = opts.directa;
+      s.modo = "directo";
+      s.size = opts.directa.size;
+    }
     return s;
   }
 
@@ -264,7 +304,15 @@ export class RemoteSource implements ZipSource {
   async leerCola(n: number): Promise<{ bytes: Uint8Array; offset: number }> {
     let res: { bytes: Uint8Array; total: number | null; status: number };
     try {
-      res = await this.fetchRaw(`bytes=-${n}`, `-${n}`);
+      // El tunel no deja pasar el rango sufijo (`bytes=-n` dispara un
+      // preflight que el nodo no contesta), pero el tamaño ya se conoce: se
+      // pide la misma cola con extremos explicitos.
+      if (this.modo === "directo") {
+        const desde = Math.max(0, this.size - n);
+        res = await this.fetchRaw(`bytes=${desde}-${this.size - 1}`, `${desde}-${this.size - 1}`);
+      } else {
+        res = await this.fetchRaw(`bytes=-${n}`, `-${n}`);
+      }
     } catch (e) {
       // El servidor dijo explicitamente que no puede servir ese rango (416 +
       // causa drive-sin-rangos). Bajar el archivo entero es lo unico que
@@ -364,14 +412,39 @@ export class RemoteSource implements ZipSource {
     let ultimoError: unknown;
     for (let i = 0; i < intentos; i++) {
       if (this.signal?.aborted) throw new Error("cancelado");
+      const modoDelIntento = this.modo;
       try {
         return await this.fetchRawUnaVez(rangeHeader, rangeParam);
       } catch (e) {
         ultimoError = e;
-        // Reintentar lo que el proxy YA dijo que no tiene arreglo (el archivo
-        // no esta en Drive, el pedido era invalido, no hay rangos) son 1,6 s
-        // de espera para llegar al mismo error: se corta en el primero.
-        if (e instanceof ErrorProxyConcepts && e.esDefinitivo) throw e;
+        // Otra lectura concurrente ya conmuto a Drive mientras esta fallaba
+        // contra el tunel: no hay nada que decidir, se repite contra Drive.
+        if (modoDelIntento === "directo" && this.modo === "drive" && i < intentos + 2) {
+          i--;
+          continue;
+        }
+        if (this.modo === "directo") {
+          // Permiso vencido (la lectura de un dibujo dura mas que su vigencia):
+          // se renueva y se repite el MISMO intento, sin gastarlo.
+          if (e instanceof ErrorProxyConcepts && (e.status === 401 || e.status === 403) && (await this.renovarPermiso())) {
+            i--;
+            continue;
+          }
+          // El nodo dijo algo sin arreglo (no esta el archivo, 4xx, no sirve
+          // rangos) o se agotaron los reintentos: el tunel no va a leer esto.
+          // Se pasa a Drive en vez de dejar el dibujo a medio abrir.
+          const definitivo = e instanceof ErrorProxyConcepts && e.esDefinitivo;
+          if (definitivo || i === intentos - 1) {
+            const causa = e instanceof ErrorProxyConcepts ? String(e.status) : e instanceof Error ? e.name : "error";
+            if (await this.conmutarADrive(`directo-${causa}`)) return this.fetchRaw(rangeHeader, rangeParam, intentos);
+            throw e;
+          }
+        } else if (e instanceof ErrorProxyConcepts && e.esDefinitivo) {
+          // Reintentar lo que el proxy YA dijo que no tiene arreglo (el archivo
+          // no esta en Drive, el pedido era invalido, no hay rangos) son 1,6 s
+          // de espera para llegar al mismo error: se corta en el primero.
+          throw e;
+        }
         // La URL resuelta pudo vencer: se descarta para que el proxy la
         // vuelva a resolver en el proximo intento.
         this.urlResuelta = null;
@@ -383,10 +456,51 @@ export class RemoteSource implements ZipSource {
     throw ultimoError instanceof Error ? ultimoError : new Error(String(ultimoError));
   }
 
+  /** Pide un permiso nuevo al firmante. `true` si hay URL fresca para reintentar. */
+  private async renovarPermiso(): Promise<boolean> {
+    if (!this.directa?.renovar || this.renovaciones >= 3) return false;
+    this.renovaciones++;
+    const n = await this.directa.renovar();
+    if (!n || n.size !== this.size) return false;
+    this.url = n.url;
+    return true;
+  }
+
+  /**
+   * Deja el tunel y sigue leyendo de Drive, SOLO si Drive tiene un archivo del
+   * mismo tamaño: los bloques ya leidos del nodo y los que falten de Drive
+   * tienen que ser del mismo zip, o los offsets se corrompen en silencio. Si
+   * no coincide (Concepts subio una version nueva mientras tanto) no se
+   * conmuta y el error del tunel sube tal cual.
+   */
+  private async conmutarADrive(motivo: string): Promise<boolean> {
+    const alt = this.directa?.alternativa;
+    if (this.modo !== "directo" || !alt) return false;
+    const previo = { url: this.url, headers: this.headers, urlResuelta: this.urlResuelta };
+    this.modo = "drive";
+    this.url = alt.url;
+    this.headers = alt.headers;
+    this.urlResuelta = null;
+    try {
+      const r = await this.fetchRawUnaVez("bytes=-1", "-1");
+      if (r.total !== null && this.size > 0 && r.total !== this.size) throw new Error("tamano distinto");
+    } catch {
+      this.modo = "directo";
+      this.url = previo.url;
+      this.headers = previo.headers;
+      this.urlResuelta = previo.urlResuelta;
+      if (this.directa) this.directa.alternativa = undefined;
+      return false;
+    }
+    this.directa?.onConmutar?.(motivo);
+    return true;
+  }
+
   private async fetchRawUnaVez(
     rangeHeader: string,
     rangeParam: string
   ): Promise<{ bytes: Uint8Array; total: number | null; status: number }> {
+    if (this.modo === "directo") return this.fetchDirectoUnaVez(rangeHeader);
     const sep = this.url.includes("?") ? "&" : "?";
     // La URL ya resuelta de Drive se reenvia al proxy para que no tenga que
     // volver a pedir y parsear la pagina de confirmacion de virus en CADA
@@ -422,6 +536,40 @@ export class RemoteSource implements ZipSource {
       if (m) total = Number(m[1]);
     }
     return { bytes: buf, total, status: res.status };
+  }
+
+  /**
+   * Un rango contra el nodo. Cualquier cosa que no sea EXACTAMENTE los bytes
+   * pedidos es un fallo: un 200 (el nodo ignoro el Range) traeria el archivo
+   * entero a RAM, y un cuerpo corto (tunel cortado limpio) corromperia los
+   * offsets del zip sin avisar.
+   */
+  private async fetchDirectoUnaVez(rangeHeader: string): Promise<{ bytes: Uint8Array; total: number | null; status: number }> {
+    const m = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
+    if (!m) throw new Error(`rango no valido para lectura directa: ${rangeHeader}`);
+    const inicio = Number(m[1]);
+    const fin = Math.min(Number(m[2]), this.size - 1);
+    const esperado = fin - inicio + 1;
+    // El tunel rapido de Cloudflare ronda 1 MB/s: un rango de varios MB tarda
+    // lo que tarda, y vencer antes lo cortaria siempre en el mismo punto.
+    const topeMs = 15_000 + Math.ceil(esperado / (200 * 1024)) * 1000;
+    const timeoutSignal = AbortSignal.timeout(topeMs);
+    const signal = this.signal ? AbortSignal.any([this.signal, timeoutSignal]) : timeoutSignal;
+    // Solo `Range: bytes=a-b`: es el unico caso que CORS deja pasar sin preflight.
+    const res = await fetch(this.url, { headers: { Range: `bytes=${inicio}-${fin}` }, signal });
+    if (!res.ok) throw await errorDelProxy(res, rangeHeader);
+    if (res.status !== 206 && esperado < this.size) {
+      await res.body?.cancel();
+      throw new ErrorProxyConcepts(`El nodo no sirvio el rango ${rangeHeader}`, {
+        status: 502,
+        range: rangeHeader,
+        causa: "directo-sin-rangos",
+      });
+    }
+    const buf = new Uint8Array(await res.arrayBuffer());
+    if (buf.length !== esperado) throw new Error(`rango incompleto del nodo: ${buf.length} de ${esperado} bytes`);
+    this.onBytes?.(buf.length);
+    return { bytes: buf, total: this.size, status: res.status };
   }
 
   private async fetchRange(
